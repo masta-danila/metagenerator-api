@@ -1,5 +1,5 @@
 """
-Модуль для работы с XMLRiver API (Яндекс поиск)
+Модуль для работы с XMLRiver API (Яндекс поиск и Wordstat)
 """
 from .single_search import search_yandex
 from .yandex_parser import (
@@ -9,6 +9,8 @@ from .yandex_parser import (
     process_sheets_data,
     save_results_to_json
 )
+from .wordstat_frequency import get_query_frequency
+from .wordstat_batch import process_sheets_data_wordstat
 
 __all__ = [
     'search_yandex',
@@ -16,5 +18,7 @@ __all__ = [
     'parse_yandex_xml',
     'process_url',
     'process_sheets_data',
-    'save_results_to_json'
+    'save_results_to_json',
+    'get_query_frequency',
+    'process_sheets_data_wordstat'
 ]

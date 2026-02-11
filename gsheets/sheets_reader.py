@@ -6,7 +6,10 @@
 2. Собирает все URL из листа "Data" и фильтрует те, которые:
    - отсутствуют в Meta, ИЛИ
    - присутствуют в Meta, но имеют незаполненные поля (h1, title, description)
-3. Возвращает вводные данные для отфильтрованных URL
+3. Возвращает вводные данные для отфильтрованных URL, включая:
+   - Запросы (Querries) с частотностью из колонки Demand
+   - Company name, Region
+   - Переменные для h1, title, description
 """
 import json
 import os
@@ -125,7 +128,7 @@ def get_all_data_urls(worksheet, meta_status: Dict[str, bool]) -> Dict[str, Dict
         meta_status: Словарь {url: True/False} со статусом заполненности Meta
     
     Returns:
-        Dict[str, Dict]: Словарь {url: {данные}}
+        Dict[str, Dict]: Словарь {url: {данные}}, где queries - список объектов [{query, frequency}, ...]
     """
     # Получаем все данные листа
     all_values = worksheet.get_all_values()
@@ -140,6 +143,7 @@ def get_all_data_urls(worksheet, meta_status: Dict[str, bool]) -> Dict[str, Dict
     try:
         url_idx = headers.index('URL') if 'URL' in headers else headers.index('url')
         queries_idx = headers.index('Querries') if 'Querries' in headers else None
+        demand_idx = headers.index('Demand') if 'Demand' in headers else None
         company_idx = headers.index('Company name') if 'Company name' in headers else None
         region_idx = headers.index('Region') if 'Region' in headers else None
         var_h1_idx = headers.index('Variables h1') if 'Variables h1' in headers else None
@@ -175,10 +179,37 @@ def get_all_data_urls(worksheet, meta_status: Dict[str, bool]) -> Dict[str, Dict
         queries = row[queries_idx].strip() if queries_idx and queries_idx < len(row) else ""
         queries_list = [q.strip() for q in queries.split('\n') if q.strip()] if queries else []
         
-        # Добавляем уникальные запросы
-        for q in queries_list:
-            if q and q not in all_data[url]["queries"]:
-                all_data[url]["queries"].append(q)
+        # Получаем частотности (могут быть разделены новой строкой, соответствуют запросам)
+        demand = row[demand_idx].strip() if demand_idx and demand_idx < len(row) else ""
+        demand_list = [d.strip() for d in demand.split('\n') if d.strip()] if demand else []
+        
+        # Добавляем уникальные запросы с частотностью
+        for i, q in enumerate(queries_list):
+            if q:
+                # Получаем соответствующую частотность (если есть)
+                frequency = None
+                if i < len(demand_list):
+                    try:
+                        frequency = int(demand_list[i])
+                    except ValueError:
+                        logger.warning(f"Не удалось преобразовать частотность '{demand_list[i]}' в число для запроса '{q}'")
+                        frequency = None
+                
+                # Проверяем, есть ли уже такой запрос
+                query_exists = False
+                for existing_q in all_data[url]["queries"]:
+                    if isinstance(existing_q, dict) and existing_q.get("query") == q:
+                        query_exists = True
+                        break
+                    elif isinstance(existing_q, str) and existing_q == q:
+                        query_exists = True
+                        break
+                
+                if not query_exists:
+                    all_data[url]["queries"].append({
+                        "query": q,
+                        "frequency": frequency
+                    })
         
         # Получаем название компании
         company_name = row[company_idx].strip() if company_idx and company_idx < len(row) else ""

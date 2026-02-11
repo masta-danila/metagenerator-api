@@ -46,6 +46,7 @@ async def generate_for_single_url(
                 # Извлекаем данные
                 title_words = url_data.get("lemmatized_title_words", [])
                 description_words = url_data.get("lemmatized_description_words", [])
+                h1_words = url_data.get("lemmatized_h1_words", [])
                 company_name = url_data.get("company_name", "")
                 queries = url_data.get("queries", [])
                 main_query = queries[0] if queries else ""
@@ -59,6 +60,7 @@ async def generate_for_single_url(
                 result = await generate_seo_texts(
                     title_words=title_words,
                     description_words=description_words,
+                    h1_words=h1_words,
                     company_name=company_name,
                     main_query=main_query,
                     h1_variables=h1_variables,
@@ -67,9 +69,18 @@ async def generate_for_single_url(
                     model=model
                 )
                 
+                # Проверяем, есть ли ошибка в результате (например, ошибка парсинга JSON)
+                if "error" in result:
+                    error_msg = result["error"]
+                    # Логируем сырой ответ для отладки, если он есть
+                    if "raw_content" in result:
+                        logger.debug(f"Raw LLM response: {result['raw_content'][:500]}")
+                    raise Exception(error_msg)
+                
                 # Добавляем метаданные
                 result["url"] = url
                 result["metadata"] = {
+                    "h1_words": h1_words,
                     "title_words": title_words,
                     "description_words": description_words,
                     "company_name": company_name,
@@ -244,7 +255,7 @@ if __name__ == "__main__":
     async def test():
         # Определяем пути относительно корня проекта
         project_root = Path(__file__).parent.parent
-        input_file = project_root / "jsontests" / "step4_lemmatized.json"
+        input_file = project_root / "jsontests" / "lemmatizer_processor_results.json"
         output_file = project_root / "jsontests" / "metagenerator_batch_results.json"
         
         # Загружаем данные

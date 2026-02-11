@@ -298,7 +298,13 @@ async def process_sheets_data(
             region = url_data.get('region', default_region)
             url_regions[url] = region
             
-            for query in queries:
+            for query_item in queries:
+                # Извлекаем текст запроса (поддерживаем как старый формат строк, так и новый формат объектов)
+                if isinstance(query_item, dict):
+                    query = query_item.get('query', '')
+                else:
+                    query = query_item
+                
                 if query not in all_queries:
                     all_queries.append(query)
                 
@@ -371,7 +377,13 @@ async def process_sheets_data(
             # Собираем все конкурентов для этого URL
             filtered_urls_set = set()
             
-            for query in url_data.get('queries', []):
+            for query_item in url_data.get('queries', []):
+                # Извлекаем текст запроса (поддерживаем как старый формат строк, так и новый формат объектов)
+                if isinstance(query_item, dict):
+                    query = query_item.get('query', '')
+                else:
+                    query = query_item
+                    
                 if query in query_results:
                     filtered_urls_set.update(query_results[query])
             

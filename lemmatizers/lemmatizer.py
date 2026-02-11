@@ -126,7 +126,7 @@ def save_results_to_json(results: Dict, filename: str = "jsontests/lemmatizer_re
     print(f"Результаты сохранены в файл: {filename}")
 
 
-def find_common_words(queries: List[str], min_words: int = 4, max_words: int = 6) -> List[str]:
+def find_common_words(queries: List[str], min_words: int = 4, max_words: int = 6, min_frequency_percent: float = 0.15) -> List[str]:
     """
     Находит самые частотные слова (леммы) и возвращает случайное количество из них
     
@@ -134,10 +134,12 @@ def find_common_words(queries: List[str], min_words: int = 4, max_words: int = 6
         queries: Список поисковых запросов/фраз
         min_words: Минимальное количество слов для возврата (по умолчанию 4)
         max_words: Максимальное количество слов для возврата (по умолчанию 6)
+        min_frequency_percent: Минимальный процент фраз (0.0-1.0), в которых должно встречаться слово
+                              Например, 0.15 = минимум 15% фраз (по умолчанию 0.15)
     
     Returns:
         Список самых частотных слов (случайное количество от min_words до max_words включительно)
-        Исключаются предлоги, союзы, частицы (на основе морфологического анализа)
+        Исключаются предлоги, союзы, частицы и слова с частотой меньше min_frequency_percent
     """
     if not queries:
         return []
@@ -190,14 +192,26 @@ def find_common_words(queries: List[str], min_words: int = 4, max_words: int = 6
     if not word_phrase_count:
         return []
     
-    # Сортируем все слова по убыванию частоты
-    sorted_words = sorted(word_phrase_count.items(), key=lambda x: x[1], reverse=True)
+    # Вычисляем минимальный порог на основе процента
+    total_queries = len(queries)
+    min_count = max(1, int(total_queries * min_frequency_percent))  # минимум 1
+    
+    # Фильтруем слова с низкой частотой
+    filtered_words = [(word, count) for word, count in word_phrase_count.items() 
+                      if count >= min_count]
+    
+    # Если после фильтрации слов нет, возвращаем пустой список
+    if not filtered_words:
+        return []
+    
+    # Сортируем отфильтрованные слова по убыванию частоты
+    sorted_words = sorted(filtered_words, key=lambda x: x[1], reverse=True)
     
     # Определяем случайное количество слов для возврата
     num_words = random.randint(min_words, max_words)
     
     # Берем топ N самых частотных слов
-    # Если слов меньше чем num_words, берем все доступные
+    # Если отфильтрованных слов меньше чем num_words, берем все доступные
     num_words = min(num_words, len(sorted_words))
     
     # Возвращаем только слова (без счетчиков)

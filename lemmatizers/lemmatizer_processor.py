@@ -22,10 +22,13 @@ def process_urls_with_lemmatization(
     title_min_words: int = 4,
     title_max_words: int = 6,
     description_min_words: int = 4,
-    description_max_words: int = 6
+    description_max_words: int = 6,
+    h1_min_words: int = 2,
+    h1_max_words: int = 5,
+    min_frequency_percent: float = 0.15
 ) -> Dict:
     """
-    Обрабатывает словарь с URL, извлекает title и description из filtered_urls,
+    Обрабатывает словарь с URL, извлекает title, description и h1 из filtered_urls,
     лемматизирует их и добавляет результаты обратно в словарь
     
     Args:
@@ -34,9 +37,12 @@ def process_urls_with_lemmatization(
         title_max_words: Максимальное количество слов для title
         description_min_words: Минимальное количество слов для description
         description_max_words: Максимальное количество слов для description
+        h1_min_words: Минимальное количество слов для h1
+        h1_max_words: Максимальное количество слов для h1
+        min_frequency_percent: Минимальный процент фраз для фильтрации редких слов (по умолчанию 0.15 = 15%)
     
     Returns:
-        Обновленный словарь с добавленными полями lemmatized_title_words и lemmatized_description_words
+        Обновленный словарь с добавленными полями lemmatized_title_words, lemmatized_description_words и lemmatized_h1_words
     """
     result_data = {}
     
@@ -48,11 +54,12 @@ def process_urls_with_lemmatization(
             # Копируем исходные данные
             result_data[spreadsheet_id]["urls"][url] = url_data.copy()
             
-            # Извлекаем все title и description из filtered_urls
+            # Извлекаем все title, description и h1 из filtered_urls
             filtered_urls = url_data.get('filtered_urls', [])
             
             titles = []
             descriptions = []
+            h1s = []
             
             for item in filtered_urls:
                 # Проверяем, является ли item словарем с метаданными
@@ -63,25 +70,37 @@ def process_urls_with_lemmatization(
                             titles.append(meta['title'])
                         if 'description' in meta and meta['description']:
                             descriptions.append(meta['description'])
+                        if 'h1' in meta and meta['h1']:
+                            h1s.append(meta['h1'])
             
             # Лемматизируем
             lemmatized_title_words = find_common_words(
                 titles, 
                 min_words=title_min_words, 
-                max_words=title_max_words
+                max_words=title_max_words,
+                min_frequency_percent=min_frequency_percent
             ) if titles else []
             
             lemmatized_description_words = find_common_words(
                 descriptions, 
                 min_words=description_min_words, 
-                max_words=description_max_words
+                max_words=description_max_words,
+                min_frequency_percent=min_frequency_percent
             ) if descriptions else []
+            
+            lemmatized_h1_words = find_common_words(
+                h1s, 
+                min_words=h1_min_words, 
+                max_words=h1_max_words,
+                min_frequency_percent=min_frequency_percent
+            ) if h1s else []
             
             # Добавляем результаты
             result_data[spreadsheet_id]["urls"][url]["lemmatized_title_words"] = lemmatized_title_words
             result_data[spreadsheet_id]["urls"][url]["lemmatized_description_words"] = lemmatized_description_words
+            result_data[spreadsheet_id]["urls"][url]["lemmatized_h1_words"] = lemmatized_h1_words
             
-            logger.info(f"[OK] {url}: title words={len(lemmatized_title_words)}, desc words={len(lemmatized_description_words)}")
+            logger.info(f"[OK] {url}: title words={len(lemmatized_title_words)}, desc words={len(lemmatized_description_words)}, h1 words={len(lemmatized_h1_words)}")
     
     return result_data
 
@@ -110,7 +129,7 @@ if __name__ == "__main__":
     """
     # Определяем пути относительно корня проекта
     project_root = Path(__file__).parent.parent
-    input_file = project_root / "jsontests" / "step3_parsed_metatags.json"
+    input_file = project_root / "jsontests" / "xmlriver_batch_results_with_meta.json"
     output_file = project_root / "jsontests" / "lemmatizer_processor_results.json"
     
     # Загружаем данные
@@ -123,7 +142,10 @@ if __name__ == "__main__":
         title_min_words=4,
         title_max_words=6,
         description_min_words=6,
-        description_max_words=10
+        description_max_words=10,
+        h1_min_words=2,
+        h1_max_words=5,
+        min_frequency_percent=0.25  # Фильтрация редких слов (15%)
     )
     
     # Сохраняем

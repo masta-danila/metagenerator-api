@@ -17,6 +17,7 @@ from llm_router import llm_request  # type: ignore
 async def generate_seo_texts(
     title_words: List[str],
     description_words: List[str],
+    h1_words: List[str],
     company_name: str,
     main_query: str = None,
     h1_variables: List[str] = None,
@@ -30,8 +31,9 @@ async def generate_seo_texts(
     Args:
         title_words: Список слов для использования в title
         description_words: Список слов для использования в description
+        h1_words: Список слов для использования в h1
         company_name: Название компании
-        main_query: Основной поисковый запрос (если None, берется первое слово из title_words)
+        main_query: Основной поисковый запрос для title и description (если None, берется первое слово из title_words)
         h1_variables: Список переменных Битрикса для h1 (например, ["#PRICE#", "#NAME#"])
         title_variables: Список переменных Битрикса для title (например, ["#PRICE#", "#NAME#"])
         description_variables: Список переменных Битрикса для description
@@ -44,11 +46,17 @@ async def generate_seo_texts(
     if main_query is None:
         main_query = title_words[0] if title_words else ""
     
+    # Случайный выбор количества слов для H1 (от 2 до 5)
+    import random
+    h1_word_count = random.randint(2, 5)
+    selected_h1_words = h1_words[:h1_word_count] if len(h1_words) >= h1_word_count else h1_words
+    
     # Формируем промпт с условной логикой
     prompt_parts = [
         f"- основной запрос: {main_query}",
-        "- основной запрос используем ближе к началу в h1, title, description",
-        "- h1 должен быть кратким и емким (2-5 слов)",
+        "- основной запрос используем ближе к началу в title и description",
+        f"- в h1 используем слова: {', '.join(selected_h1_words)}",
+        "- h1 должен быть кратким и емким",
         "- в h1 название компании использовать не нужно",
         "- в h1 и title нельзя дублировать слова (каждое слово используется только один раз)",
     ]
@@ -179,6 +187,7 @@ if __name__ == "__main__":
             # Извлекаем данные
             title_words = url_data.get("lemmatized_title_words", [])
             description_words = url_data.get("lemmatized_description_words", [])
+            h1_words = url_data.get("lemmatized_h1_words", [])
             company_name = url_data.get("company_name", "Ворота нам")
             queries = url_data.get("queries", [])
             main_query = queries[0] if queries else "ворота"
@@ -192,6 +201,7 @@ if __name__ == "__main__":
             print(f"\nПараметры генерации:")
             print(f"  Основной запрос: {main_query}")
             print(f"  Компания: {company_name}")
+            print(f"  H1 words: {h1_words}")
             print(f"  Title words: {title_words}")
             print(f"  Description words: {description_words}")
             print(f"  H1 variables: {h1_variables}")
@@ -203,6 +213,7 @@ if __name__ == "__main__":
             seo_texts = await generate_seo_texts(
                 title_words=title_words,
                 description_words=description_words,
+                h1_words=h1_words,
                 company_name=company_name,
                 main_query=main_query,
                 h1_variables=h1_variables,
@@ -214,6 +225,7 @@ if __name__ == "__main__":
             # Добавляем метаданные
             seo_texts["metadata"] = {
                 "url": target_url,
+                "h1_words": h1_words,
                 "title_words": title_words,
                 "description_words": description_words,
                 "company_name": company_name,

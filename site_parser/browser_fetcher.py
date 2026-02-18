@@ -191,6 +191,16 @@ class BrowserFetcher:
             # НЕ устанавливаем таймауты - они могут палить бота!
             # Пусть будут дефолтные настройки undetected-chromedriver
             
+            # КРИТИЧЕСКИ ВАЖНО: "Прогрев" браузера - заходим на нейтральный сайт
+            # Это делает браузер более "легитимным" для защит
+            try:
+                logger.info("Прогрев браузера: заходим на Google...")
+                self.driver.get("https://www.google.com/")
+                time.sleep(2)  # Небольшая задержка
+                logger.info("Прогрев завершен")
+            except Exception as e:
+                logger.warning(f"Прогрев не удался, но продолжаем: {e}")
+            
             logger.info("Браузер успешно запущен")
             return True
             

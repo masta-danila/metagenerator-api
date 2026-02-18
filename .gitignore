@@ -32,3 +32,7 @@ logs/
 
 # Test results
 jsontests/
+
+# Proxy configs (sensitive data)
+**/proxy.txt
+site_parser/proxy.txt

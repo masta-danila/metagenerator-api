@@ -107,7 +107,15 @@ def is_domain_blacklisted(url: str) -> bool:
         return False
 
 
-def parse_yandex_xml(xml_data: str, urls_per_query: int = 10, debug: bool = False) -> List[str]:
+def parse_yandex_xml(
+    xml_data: str,
+    urls_per_query: int = 10,
+    debug: bool = False,
+    query_index: int = None,
+    total_queries: int = None,
+    retry_attempt: int = None,
+    max_retries: int = None
+) -> List[str]:
     """
     Парсит XML ответ от XMLRiver и извлекает URL из результатов поиска.
     
@@ -115,27 +123,38 @@ def parse_yandex_xml(xml_data: str, urls_per_query: int = 10, debug: bool = Fals
         xml_data: XML строка с результатами
         urls_per_query: Количество URL для извлечения
         debug: Включить детальное логирование для отладки
+        query_index: Номер текущего запроса (для логов)
+        total_queries: Общее количество запросов (для логов)
+        retry_attempt: Номер текущей попытки (для логов)
+        max_retries: Максимальное количество попыток (для логов)
     
     Returns:
         Список URL из органической выдачи
     """
+    # Формируем префикс для логов
+    log_prefix = ""
+    if query_index is not None and total_queries is not None:
+        log_prefix = f"[QUERY {query_index}/{total_queries}]"
+        if retry_attempt is not None and max_retries is not None:
+            log_prefix += f"[ATTEMPT {retry_attempt + 1}/{max_retries}]"
+    
     if not xml_data:
-        logger.warning("[WARN] parse_yandex_xml: пустой xml_data")
+        logger.warning(f"{log_prefix}[WARN] parse_yandex_xml: пустой xml_data")
         return []
     
     try:
         root = ET.fromstring(xml_data)
         
         if debug:
-            logger.debug(f"[DEBUG] XML root tag: {root.tag}")
-            logger.debug(f"[DEBUG] XML root attrib: {root.attrib}")
+            logger.debug(f"{log_prefix}[DEBUG] XML root tag: {root.tag}")
+            logger.debug(f"{log_prefix}[DEBUG] XML root attrib: {root.attrib}")
         
         # Проверяем на ошибки в ответе
         error_elem = root.find('.//error')
         if error_elem is not None:
             error_code = error_elem.get('code', 'UNKNOWN')
             error_text = error_elem.text or 'No error message'
-            logger.error(f"[ERROR] XMLRiver API вернул ошибку: {error_code} - {error_text}")
+            logger.error(f"{log_prefix}[ERROR] XMLRiver API вернул ошибку: {error_code} - {error_text}")
             return []
         
         # XMLRiver возвращает результаты в <response><results><grouping><group><doc>
@@ -146,16 +165,16 @@ def parse_yandex_xml(xml_data: str, urls_per_query: int = 10, debug: bool = Fals
         docs = root.findall('.//doc')
         
         if debug:
-            logger.debug(f"[DEBUG] Найдено элементов <doc>: {len(docs)}")
+            logger.debug(f"{log_prefix}[DEBUG] Найдено элементов <doc>: {len(docs)}")
         
         if len(docs) == 0:
-            logger.warning("[WARN] Не найдено элементов <doc> в XML")
+            logger.warning(f"{log_prefix}[WARN] В XML нет элементов <doc> (Яндекс вернул пустую выдачу)")
             
             if debug:
                 # Детальное логирование только в debug режиме
-                logger.warning(f"[WARN] XML начало: {xml_data[:500]}")
+                logger.warning(f"{log_prefix}[WARN] XML начало: {xml_data[:500]}")
                 all_elements = [elem.tag for elem in root.iter()]
-                logger.warning(f"[WARN] Найдены XML элементы: {set(all_elements)}")
+                logger.warning(f"{log_prefix}[WARN] Найдены XML элементы: {set(all_elements)}")
         
         for doc in docs:
             # URL находится в <url>
@@ -167,7 +186,7 @@ def parse_yandex_xml(xml_data: str, urls_per_query: int = 10, debug: bool = Fals
                 if is_domain_blacklisted(url):
                     blacklisted_count += 1
                     if debug:
-                        logger.debug(f"[DEBUG] Пропущен blacklisted: {url}")
+                        logger.debug(f"{log_prefix}[DEBUG] Пропущен blacklisted: {url}")
                     continue
                 
                 urls.append(url)
@@ -175,18 +194,23 @@ def parse_yandex_xml(xml_data: str, urls_per_query: int = 10, debug: bool = Fals
                 if len(urls) >= urls_per_query:
                     break
         
-        if blacklisted_count > 0:
-            logger.debug(f"[DEBUG] Отфильтровано {blacklisted_count} URL из blacklist")
+        # Логируем результаты фильтрации
+        total_found = len(docs)
+        if blacklisted_count > 0 and len(urls) == 0:
+            logger.warning(f"{log_prefix}[WARN] В XML было {total_found} URL, но все {blacklisted_count} отфильтрованы blacklist")
+        elif blacklisted_count > 0:
+            logger.debug(f"{log_prefix}[DEBUG] В XML {total_found} URL: {len(urls)} взято, {blacklisted_count} отфильтровано blacklist")
+        else:
+            logger.debug(f"{log_prefix}[DEBUG] В XML {total_found} URL, взято {len(urls)}")
         
-        logger.debug(f"[DEBUG] Извлечено {len(urls)} URL из XML")
         return urls
     
     except ET.ParseError as e:
-        logger.error(f"[ERROR] parse_yandex_xml: ошибка парсинга XML - {e}")
-        logger.error(f"[ERROR] XML начало: {xml_data[:300]}")
+        logger.error(f"{log_prefix}[ERROR] parse_yandex_xml: ошибка парсинга XML - {e}")
+        logger.error(f"{log_prefix}[ERROR] XML начало: {xml_data[:300]}")
         return []
     except Exception as e:
-        logger.error(f"[ERROR] parse_yandex_xml: неожиданная ошибка - {e}")
+        logger.error(f"{log_prefix}[ERROR] parse_yandex_xml: неожиданная ошибка - {e}")
         return []
 
 
@@ -199,6 +223,7 @@ async def process_url(
     domain: str = "ru",
     lang: str = "ru",
     max_concurrent: int = 10,
+    max_retries: int = 3,
 ) -> Dict:
     """
     Обрабатывает один URL: делает запрос по queries и добавляет отфильтрованные URL
@@ -212,6 +237,7 @@ async def process_url(
         domain: Домен Яндекса (ru, com, ua...)
         lang: Язык (ru, uk, en...)
         max_concurrent: Максимальное количество одновременных запросов
+        max_retries: Максимальное количество повторных попыток при ошибках API
     
     Returns:
         Словарь с исходными данными + filtered_urls
@@ -236,6 +262,7 @@ async def process_url(
             domain=domain,
             lang=lang,
             max_concurrent=max_concurrent,
+            max_retries=max_retries,
         )
         
         # Результат - список уникальных URL
@@ -264,6 +291,7 @@ async def process_sheets_data(
     max_concurrent: int = 10,
     task_start_delay: float = 0.0,
     max_retries: int = 3,
+    retry_delay: int = 5,
 ) -> Dict:
     """
     Обрабатывает все URL из sheets_data асинхронно через XMLRiver API.
@@ -286,6 +314,7 @@ async def process_sheets_data(
         max_concurrent: Максимальное количество одновременных запросов XMLRiver (10 для стандартного аккаунта)
         task_start_delay: Задержка между стартами задач (в секундах)
         max_retries: Максимальное количество повторных попыток при ошибках API
+        retry_delay: Задержка между повторными попытками в секундах
     
     Returns:
         Обновлённый словарь с добавленными filtered_urls для каждого URL
@@ -329,33 +358,70 @@ async def process_sheets_data(
             await asyncio.sleep(task_start_delay * query_index)
         
         async with semaphore:
-            logger.info(f"[QUERY {query_index}/{total_queries}] Запрос: '{query}'")
-            
             # Определяем region (берем из первого URL, которому нужен этот запрос)
             first_url = query_to_urls[query][0]
             region = url_regions.get(first_url, default_region)
             
-            # Получаем результаты для запроса
-            search_result = await search_yandex(
-                query=query,
-                region=region,
-                groupby=urls_per_query,
-                page=0,
-                device=device,
-                domain=domain,
-                lang=lang,
-                max_retries=max_retries,
-            )
+            total_api_requests = 0
             
-            if search_result['success'] and search_result['data']:
-                # Парсим XML и извлекаем URL
-                urls = parse_yandex_xml(search_result['data'], urls_per_query)
-                logger.info(f"[QUERY {query_index}/{total_queries}] Найдено {len(urls)} URL")
-                return query, urls, search_result['api_requests']
-            else:
-                error_msg = search_result.get('error', 'Unknown error')
-                logger.warning(f"[QUERY {query_index}/{total_queries}] Не получены данные: {error_msg}")
-                return query, [], search_result['api_requests']
+            # Retry цикл для случаев когда получен XML но 0 результатов
+            for retry_attempt in range(max_retries):
+                # Получаем результаты для запроса
+                search_result = await search_yandex(
+                    query=query,
+                    region=region,
+                    groupby=urls_per_query,
+                    page=0,
+                    device=device,
+                    domain=domain,
+                    lang=lang,
+                    max_retries=1,  # search_yandex делает 1 попытку, мы управляем retry здесь
+                    retry_delay=10,  # Задержка для внутренних ретраев в search_yandex
+                    query_index=query_index,
+                    total_queries=total_queries,
+                    outer_retry_attempt=retry_attempt,  # Передаем номер текущей попытки из внешнего цикла
+                    outer_max_retries=max_retries,  # Передаем максимальное количество попыток
+                )
+                
+                # Накапливаем api_requests от всех попыток
+                total_api_requests += search_result.get('api_requests', 0)
+                
+                if search_result['success'] and search_result['data']:
+                    # Парсим XML и извлекаем URL
+                    urls = parse_yandex_xml(
+                        search_result['data'],
+                        urls_per_query,
+                        debug=False,
+                        query_index=query_index,
+                        total_queries=total_queries,
+                        retry_attempt=retry_attempt,
+                        max_retries=max_retries
+                    )
+                    
+                    if len(urls) > 0:
+                        # Успех! Есть результаты
+                        logger.info(f"[QUERY {query_index}/{total_queries}][RESULT] Найдено {len(urls)} URL")
+                        return query, urls, total_api_requests
+                    else:
+                        # Получен XML, но 0 результатов
+                        if retry_attempt < max_retries - 1:
+                            logger.warning(f"[QUERY {query_index}/{total_queries}][RETRY {retry_attempt + 1}/{max_retries}] 0 URL в результате, повтор через {retry_delay} сек...")
+                            await asyncio.sleep(retry_delay)
+                            continue
+                        else:
+                            # Последняя попытка - возвращаем пустой результат
+                            logger.warning(f"[QUERY {query_index}/{total_queries}][RESULT] 0 URL после {max_retries} попыток")
+                            return query, [], total_api_requests
+                else:
+                    # Ошибка API - повторяем если не последняя попытка
+                    error_msg = search_result.get('error', 'Unknown error')
+                    if retry_attempt < max_retries - 1:
+                        logger.warning(f"[QUERY {query_index}/{total_queries}][RETRY {retry_attempt + 1}/{max_retries}] Ошибка API: {error_msg}, повтор через {retry_delay} сек...")
+                        await asyncio.sleep(retry_delay)
+                        continue
+                    else:
+                        logger.error(f"[QUERY {query_index}/{total_queries}][RESULT] Ошибка после {max_retries} попыток: {error_msg}")
+                        return query, [], total_api_requests
     
     # Создаём задачи для всех запросов
     tasks = []
@@ -377,7 +443,18 @@ async def process_sheets_data(
         query_api_requests[query] = api_requests
         total_api_requests += api_requests
     
+    # Подсчитываем запросы с 0 результатами
+    queries_with_zero_results = [query for query, urls in query_results.items() if len(urls) == 0]
+    
     logger.info(f"[STEP 2] Обработка запросов завершена! Всего API запросов: {total_api_requests}")
+    
+    if queries_with_zero_results:
+        logger.warning(f"[РЕЗУЛЬТАТ] Запросов с 0 URL: {len(queries_with_zero_results)} из {len(all_queries)}")
+        logger.warning(f"[РЕЗУЛЬТАТ] Список запросов с 0 URL:")
+        for idx, query in enumerate(queries_with_zero_results, 1):
+            logger.warning(f"  {idx}. {query}")
+    else:
+        logger.info(f"[РЕЗУЛЬТАТ] Все запросы вернули результаты!")
     
     # Загружаем прайс для расчета стоимости
     pricing_file = Path(__file__).parent / "xmlriver_pricing.json"
@@ -465,6 +542,8 @@ async def get_top_results(
     domain: str = "ru",
     lang: str = "ru",
     max_concurrent: int = 10,
+    max_retries: int = 3,
+    retry_delay: int = 1,
 ) -> List[str]:
     """
     Получает топ результатов для списка запросов через XMLRiver API параллельно.
@@ -492,6 +571,8 @@ async def get_top_results(
         domain: Домен Яндекса (ru, com, ua...)
         lang: Язык (ru, uk, en...)
         max_concurrent: Максимальное количество одновременных запросов (по умолчанию 10)
+        max_retries: Максимальное количество повторных попыток при ошибках API
+        retry_delay: Задержка между повторными попытками в секундах
     
     Returns:
         Список уникальных URL из всех запросов
@@ -518,45 +599,77 @@ async def get_top_results(
     async def process_query_with_semaphore(query: str, query_index: int, total_queries: int) -> List[str]:
         """Обрабатывает один запрос с контролем через семафор"""
         async with semaphore:
-            logger.info(f"[QUERY {query_index}/{total_queries}] Запрос: '{query}'")
-            
-            # Получаем результаты для запроса (синхронно - один GET запрос → один XML ответ)
-            search_result = await search_yandex(
-                query=query,
-                region=region,
-                groupby=urls_per_query,
-                page=0,
-                device=device,
-                domain=domain,
-                lang=lang,
-                max_retries=max_retries,
-            )
-            
-            if search_result['success'] and search_result['data']:
-                # Сохраняем примеры XML для отладки (первые 3 запроса)
-                if query_index <= 3:
-                    try:
-                        debug_dir = Path(__file__).parent.parent / "jsontests" / "xml_debug"
-                        debug_dir.mkdir(exist_ok=True)
-                        
-                        # Безопасное имя файла из запроса
-                        safe_query = query.replace(' ', '_').replace('/', '_')[:50]
-                        filename = f"query_{query_index:02d}_{safe_query}.xml"
-                        
-                        with open(debug_dir / filename, 'w', encoding='utf-8') as f:
-                            f.write(search_result['data'])
-                        logger.debug(f"[DEBUG] Сохранен XML: xml_debug/{filename}")
-                    except Exception as e:
-                        logger.debug(f"[DEBUG] Не удалось сохранить XML: {e}")
+            # Retry цикл для случаев когда получен XML но 0 результатов
+            for retry_attempt in range(max_retries):
+                # Получаем результаты для запроса
+                search_result = await search_yandex(
+                    query=query,
+                    region=region,
+                    groupby=urls_per_query,
+                    page=0,
+                    device=device,
+                    domain=domain,
+                    lang=lang,
+                    max_retries=1,  # search_yandex делает 1 попытку, мы управляем retry здесь
+                    retry_delay=10,  # Задержка для внутренних ретраев в search_yandex
+                    query_index=query_index,
+                    total_queries=total_queries,
+                    outer_retry_attempt=retry_attempt,  # Передаем номер текущей попытки из внешнего цикла
+                    outer_max_retries=max_retries,  # Передаем максимальное количество попыток
+                )
                 
-                # Парсим XML и извлекаем URL (с debug режимом для первых 3 запросов)
-                urls = parse_yandex_xml(search_result['data'], urls_per_query, debug=(query_index <= 3))
-                logger.info(f"[QUERY {query_index}/{total_queries}] Найдено {len(urls)} URL")
-                return urls
-            else:
-                error_msg = search_result.get('error', 'Unknown error')
-                logger.warning(f"[QUERY {query_index}/{total_queries}] Не получены данные: {error_msg}")
-                return []
+                if search_result['success'] and search_result['data']:
+                    # Сохраняем примеры XML для отладки (первые 3 запроса)
+                    if query_index <= 3:
+                        try:
+                            debug_dir = Path(__file__).parent.parent / "jsontests" / "xml_debug"
+                            debug_dir.mkdir(exist_ok=True)
+                            
+                            # Безопасное имя файла из запроса
+                            safe_query = query.replace(' ', '_').replace('/', '_')[:50]
+                            filename = f"query_{query_index:02d}_{safe_query}.xml"
+                            
+                            with open(debug_dir / filename, 'w', encoding='utf-8') as f:
+                                f.write(search_result['data'])
+                            logger.debug(f"[QUERY {query_index}/{total_queries}][DEBUG] Сохранен XML: xml_debug/{filename}")
+                        except Exception as e:
+                            logger.debug(f"[QUERY {query_index}/{total_queries}][DEBUG] Не удалось сохранить XML: {e}")
+                    
+                    # Парсим XML и извлекаем URL (с debug режимом для первых 3 запросов)
+                    urls = parse_yandex_xml(
+                        search_result['data'],
+                        urls_per_query,
+                        debug=(query_index <= 3),
+                        query_index=query_index,
+                        total_queries=total_queries,
+                        retry_attempt=retry_attempt,
+                        max_retries=max_retries
+                    )
+                    
+                    if len(urls) > 0:
+                        # Успех! Есть результаты
+                        logger.info(f"[QUERY {query_index}/{total_queries}][RESULT] Найдено {len(urls)} URL")
+                        return urls
+                    else:
+                        # Получен XML, но 0 результатов - retry
+                        if retry_attempt < max_retries - 1:
+                            logger.warning(f"[QUERY {query_index}/{total_queries}][RETRY {retry_attempt + 1}/{max_retries}] 0 URL в результате, повтор через {retry_delay} сек...")
+                            await asyncio.sleep(retry_delay)
+                            continue
+                        else:
+                            # Последняя попытка
+                            logger.warning(f"[QUERY {query_index}/{total_queries}][RESULT] 0 URL после {max_retries} попыток")
+                            return []
+                else:
+                    # Ошибка API - повторяем если не последняя попытка
+                    error_msg = search_result.get('error', 'Unknown error')
+                    if retry_attempt < max_retries - 1:
+                        logger.warning(f"[QUERY {query_index}/{total_queries}][RETRY {retry_attempt + 1}/{max_retries}] Ошибка API: {error_msg}, повтор через {retry_delay} сек...")
+                        await asyncio.sleep(retry_delay)
+                        continue
+                    else:
+                        logger.error(f"[QUERY {query_index}/{total_queries}][RESULT] Ошибка после {max_retries} попыток: {error_msg}")
+                        return []
     
     # Создаём задачи для всех запросов
     tasks = []
@@ -567,13 +680,25 @@ async def get_top_results(
     # Выполняем все задачи параллельно
     results = await asyncio.gather(*tasks)
     
-    # Собираем все уникальные URL
+    # Собираем все уникальные URL и отслеживаем запросы с 0 результатами
     all_urls: Set[str] = set()
-    for urls_list in results:
+    queries_with_zero_results = []
+    
+    for idx, (query, urls_list) in enumerate(zip(queries, results)):
+        if len(urls_list) == 0:
+            queries_with_zero_results.append(query)
         all_urls.update(urls_list)
     
     result = list(all_urls)
     logger.info(f"[OK] Всего найдено {len(result)} уникальных URL из {len(queries)} запросов")
+    
+    if queries_with_zero_results:
+        logger.warning(f"[РЕЗУЛЬТАТ] Запросов с 0 URL: {len(queries_with_zero_results)} из {len(queries)}")
+        logger.warning(f"[РЕЗУЛЬТАТ] Список запросов с 0 URL:")
+        for idx, query in enumerate(queries_with_zero_results, 1):
+            logger.warning(f"  {idx}. {query}")
+    else:
+        logger.info(f"[РЕЗУЛЬТАТ] Все запросы вернули результаты!")
     
     return result
 

@@ -41,6 +41,11 @@ async def search_yandex(
     domain: str = "ru",
     lang: str = "ru",
     max_retries: int = 3,
+    retry_delay: int = 10,
+    query_index: int = None,
+    total_queries: int = None,
+    outer_retry_attempt: int = None,
+    outer_max_retries: int = None,
 ) -> dict:
     """
     Выполняет поиск в Яндексе через XMLRiver API.
@@ -55,6 +60,11 @@ async def search_yandex(
         domain: Домен Яндекса (ru, com, ua, com.tr, by, kz)
         lang: Язык (ru, uk, en...)
         max_retries: Максимальное количество повторных попыток
+        retry_delay: Задержка между попытками в секундах
+        query_index: Номер текущего запроса (для логов)
+        total_queries: Общее количество запросов (для логов)
+        outer_retry_attempt: Номер текущей попытки внешнего цикла (для логов)
+        outer_max_retries: Максимальное количество попыток внешнего цикла (для логов)
     
     Returns:
         Словарь с ключами:
@@ -78,8 +88,20 @@ async def search_yandex(
         "lang": lang,
     }
     
-    logger.info(f"[REQUEST] XMLRiver: query='{query}', lr={region}, device={device}")
-    logger.debug(f"[DEBUG] Full params: {params}")
+    # Формируем префикс для логов
+    log_prefix = ""
+    if query_index is not None and total_queries is not None:
+        log_prefix = f"[QUERY {query_index}/{total_queries}]"
+    
+    # Формируем информацию о попытке для логов
+    if outer_retry_attempt is not None and outer_max_retries is not None:
+        attempt_info = f"[ATTEMPT {outer_retry_attempt + 1}/{outer_max_retries}]"
+        logger.info(f"{log_prefix}{attempt_info}[REQUEST] XMLRiver: query='{query}', lr={region}, device={device}")
+    else:
+        attempt_info = None  # Будет вычисляться динамически
+        logger.info(f"{log_prefix}[REQUEST] XMLRiver: query='{query}', lr={region}, device={device}")
+    
+    logger.debug(f"{log_prefix}[DEBUG] Full params: {params}")
     
     api_requests = 0  # Счетчик фактических запросов к API
     
@@ -92,18 +114,19 @@ async def search_yandex(
             async with httpx.AsyncClient(timeout=timeout) as client:
                 response = await client.get(API_URL, params=params)
             
-            logger.debug(f"[DEBUG] XMLRiver response: status_code={response.status_code}, length={len(response.text)}")
+            logger.debug(f"{log_prefix}[DEBUG] XMLRiver response: status_code={response.status_code}, length={len(response.text)}")
             
             # Обработка 429 (Too Many Requests)
             if response.status_code == 429:
                 # При rate limit деньги не снимаются - НЕ увеличиваем api_requests
                 wait_time = 60 * (attempt + 1)
-                logger.warning(f"[WARN] Rate limit (429). Попытка {attempt + 1}/{max_retries}. Ожидание {wait_time} сек...")
+                current_attempt = attempt_info if attempt_info else f"[ATTEMPT {attempt + 1}/{max_retries}]"
+                logger.warning(f"{log_prefix}{current_attempt}[WARN] Rate limit (429). Ожидание {wait_time} сек...")
                 if attempt < max_retries - 1:
                     await asyncio.sleep(wait_time)
                     continue
                 else:
-                    logger.error(f"[ERROR] Превышено максимальное количество попыток при rate limit")
+                    logger.error(f"{log_prefix}[ERROR] Превышено максимальное количество попыток при rate limit")
                     return {
                         "success": False,
                         "data": None,
@@ -123,10 +146,11 @@ async def search_yandex(
         
         except httpx.TimeoutException as e:
             # При timeout деньги не снимаются - НЕ увеличиваем api_requests
-            logger.error(f"[ERROR] search_yandex: таймаут запроса (попытка {attempt + 1}/{max_retries}) - {e}")
+            current_attempt = attempt_info if attempt_info else f"[ATTEMPT {attempt + 1}/{max_retries}]"
+            logger.error(f"{log_prefix}{current_attempt}[ERROR] Таймаут запроса: {e}")
             if attempt < max_retries - 1:
-                logger.info(f"[RETRY] Повторная попытка через 10 секунд...")
-                await asyncio.sleep(10)
+                logger.info(f"{log_prefix}[RETRY] Повторная попытка через {retry_delay} секунд...")
+                await asyncio.sleep(retry_delay)
                 continue
             return {
                 "success": False,
@@ -137,11 +161,12 @@ async def search_yandex(
         
         except httpx.HTTPStatusError as e:
             # При HTTP ошибке деньги не снимаются - НЕ увеличиваем api_requests
-            logger.error(f"[ERROR] search_yandex: HTTP ошибка {e.response.status_code} (попытка {attempt + 1}/{max_retries}) - {e}")
-            logger.error(f"[ERROR] Response content: {e.response.text[:200]}")
+            current_attempt = attempt_info if attempt_info else f"[ATTEMPT {attempt + 1}/{max_retries}]"
+            logger.error(f"{log_prefix}{current_attempt}[ERROR] HTTP {e.response.status_code}: {e}")
+            logger.error(f"{log_prefix}[ERROR] Response: {e.response.text[:200]}")
             if attempt < max_retries - 1:
-                logger.info(f"[RETRY] Повторная попытка через 10 секунд...")
-                await asyncio.sleep(10)
+                logger.info(f"{log_prefix}[RETRY] Повторная попытка через {retry_delay} секунд...")
+                await asyncio.sleep(retry_delay)
                 continue
             return {
                 "success": False,
@@ -151,12 +176,12 @@ async def search_yandex(
             }
         
         except httpx.RequestError as e:
-            logger.error(f"[ERROR] search_yandex: ошибка HTTP запроса (попытка {attempt + 1}/{max_retries})")
-            logger.error(f"[ERROR] Тип ошибки: {type(e).__name__}")
-            logger.error(f"[ERROR] Детали: {str(e)}")
+            current_attempt = attempt_info if attempt_info else f"[ATTEMPT {attempt + 1}/{max_retries}]"
+            logger.error(f"{log_prefix}{current_attempt}[ERROR] Ошибка HTTP запроса: {type(e).__name__}")
+            logger.error(f"{log_prefix}[ERROR] Детали: {str(e)}")
             if attempt < max_retries - 1:
-                logger.info(f"[RETRY] Повторная попытка через 10 секунд...")
-                await asyncio.sleep(10)
+                logger.info(f"{log_prefix}[RETRY] Повторная попытка через {retry_delay} секунд...")
+                await asyncio.sleep(retry_delay)
                 continue
             return {
                 "success": False,
@@ -166,10 +191,11 @@ async def search_yandex(
             }
         
         except Exception as e:
-            logger.error(f"[ERROR] search_yandex: неожиданная ошибка (попытка {attempt + 1}/{max_retries}) - {type(e).__name__}: {e}")
+            current_attempt = attempt_info if attempt_info else f"[ATTEMPT {attempt + 1}/{max_retries}]"
+            logger.error(f"{log_prefix}{current_attempt}[ERROR] Неожиданная ошибка: {type(e).__name__}: {e}")
             if attempt < max_retries - 1:
-                logger.info(f"[RETRY] Повторная попытка через 10 секунд...")
-                await asyncio.sleep(10)
+                logger.info(f"{log_prefix}[RETRY] Повторная попытка через {retry_delay} секунд...")
+                await asyncio.sleep(retry_delay)
                 continue
             return {
                 "success": False,

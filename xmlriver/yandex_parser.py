@@ -257,6 +257,7 @@ async def process_sheets_data(
     sheets_data: Dict,
     default_region: int = 213,
     urls_per_query: int = 10,
+    queries_per_url: int = 4,
     device: str = "mobile",
     domain: str = "ru",
     lang: str = "ru",
@@ -277,6 +278,7 @@ async def process_sheets_data(
         sheets_data: Словарь с данными из Google Sheets (каждый URL может иметь свой region)
         default_region: ID региона по умолчанию (если не указан в данных URL)
         urls_per_query: Количество URL для извлечения от каждого запроса
+        queries_per_url: Количество запросов для обработки от каждого URL (по умолчанию 4)
         device: Устройство (desktop, tablet, mobile)
         domain: Домен Яндекса (ru, com, ua...)
         lang: Язык (ru, uk, en...)
@@ -295,6 +297,8 @@ async def process_sheets_data(
         urls_dict = spreadsheet_info.get('urls', {})
         for url, url_data in urls_dict.items():
             queries = url_data.get('queries', [])
+            # Ограничиваем количество запросов для обработки
+            queries = queries[:queries_per_url]
             region = url_data.get('region', default_region)
             url_regions[url] = region
             
@@ -330,7 +334,7 @@ async def process_sheets_data(
             region = url_regions.get(first_url, default_region)
             
             # Получаем результаты для запроса
-            xml_data = await search_yandex(
+            search_result = await search_yandex(
                 query=query,
                 region=region,
                 groupby=urls_per_query,
@@ -340,14 +344,15 @@ async def process_sheets_data(
                 lang=lang,
             )
             
-            if xml_data:
+            if search_result['success'] and search_result['data']:
                 # Парсим XML и извлекаем URL
-                urls = parse_yandex_xml(xml_data, urls_per_query)
+                urls = parse_yandex_xml(search_result['data'], urls_per_query)
                 logger.info(f"[QUERY {query_index}/{total_queries}] Найдено {len(urls)} URL")
-                return query, urls
+                return query, urls, search_result['api_requests']
             else:
-                logger.warning(f"[QUERY {query_index}/{total_queries}] Не получены данные")
-                return query, []
+                error_msg = search_result.get('error', 'Unknown error')
+                logger.warning(f"[QUERY {query_index}/{total_queries}] Не получены данные: {error_msg}")
+                return query, [], search_result['api_requests']
     
     # Создаём задачи для всех запросов
     tasks = []
@@ -360,12 +365,28 @@ async def process_sheets_data(
     # Выполняем все задачи параллельно
     results = await asyncio.gather(*tasks)
     
-    # Создаём маппинг: запрос → список URL из результатов
+    # Создаём маппинг: запрос → список URL из результатов и накапливаем api_requests
     query_results = {}
-    for query, urls in results:
+    query_api_requests = {}  # Маппинг: запрос → количество API запросов
+    total_api_requests = 0
+    for query, urls, api_requests in results:
         query_results[query] = urls
+        query_api_requests[query] = api_requests
+        total_api_requests += api_requests
     
-    logger.info(f"[STEP 2] Обработка запросов завершена!")
+    logger.info(f"[STEP 2] Обработка запросов завершена! Всего API запросов: {total_api_requests}")
+    
+    # Загружаем прайс для расчета стоимости
+    pricing_file = Path(__file__).parent / "xmlriver_pricing.json"
+    try:
+        with open(pricing_file, 'r', encoding='utf-8') as f:
+            pricing_data = json.load(f)
+            price_per_request = pricing_data.get('price_per_request', 0.025)
+            currency = pricing_data.get('currency', 'RUB')
+    except Exception as e:
+        logger.warning(f"Не удалось загрузить прайс из {pricing_file}: {e}. Используем значения по умолчанию.")
+        price_per_request = 0.025
+        currency = 'RUB'
     
     # Шаг 3: Распределяем результаты обратно по URL
     result_data = {}
@@ -374,29 +395,58 @@ async def process_sheets_data(
         urls_dict = spreadsheet_info.get('urls', {})
         
         for url, url_data in urls_dict.items():
-            # Собираем все конкурентов для этого URL
-            filtered_urls_set = set()
+            queries = url_data.get('queries', [])
+            # Ограничиваем количество запросов (как в шаге 1)
+            queries = queries[:queries_per_url]
             
-            for query_item in url_data.get('queries', []):
-                # Извлекаем текст запроса (поддерживаем как старый формат строк, так и новый формат объектов)
+            # Обновляем каждый запрос, добавляя к нему filtered_urls
+            updated_queries = []
+            url_total_api_requests = 0  # Счетчик API запросов для этого URL
+            
+            for query_item in queries:
+                # Извлекаем текст запроса
                 if isinstance(query_item, dict):
                     query = query_item.get('query', '')
+                    query_data = query_item.copy()
                 else:
                     query = query_item
-                    
+                    query_data = {'query': query}
+                
+                # Добавляем filtered_urls для этого запроса
                 if query in query_results:
-                    filtered_urls_set.update(query_results[query])
+                    query_data['filtered_urls'] = query_results[query]
+                else:
+                    query_data['filtered_urls'] = []
+                
+                # Накапливаем API запросы для этого URL
+                if query in query_api_requests:
+                    url_total_api_requests += query_api_requests[query]
+                
+                updated_queries.append(query_data)
             
-            # Добавляем filtered_urls в результат
+            # Рассчитываем стоимость для этого URL
+            url_cost = url_total_api_requests * price_per_request
+            
+            # Добавляем результат
             if spreadsheet_id not in result_data:
                 result_data[spreadsheet_id] = {'urls': {}}
             
             result_data[spreadsheet_id]['urls'][url] = {
                 **url_data,
-                'filtered_urls': list(filtered_urls_set)
+                'queries': updated_queries,
+                'yandex_search_cost': {
+                    'api_requests': url_total_api_requests,
+                    'cost': round(url_cost, 4),
+                    'currency': currency
+                }
             }
             
-            logger.debug(f"[URL] {url}: {len(filtered_urls_set)} уникальных конкурентов")
+            # Подсчитываем общее количество уникальных конкурентов для логирования
+            total_filtered_urls = set()
+            for q in updated_queries:
+                total_filtered_urls.update(q.get('filtered_urls', []))
+            
+            logger.debug(f"[URL] {url}: {len(total_filtered_urls)} уникальных конкурентов из {len(updated_queries)} запросов")
     
     logger.info(f"[STEP 3] Результаты распределены по {sum(len(si.get('urls', {})) for si in result_data.values())} URL")
     logger.info("Обработка завершена!")
@@ -468,7 +518,7 @@ async def get_top_results(
             logger.info(f"[QUERY {query_index}/{total_queries}] Запрос: '{query}'")
             
             # Получаем результаты для запроса (синхронно - один GET запрос → один XML ответ)
-            xml_data = await search_yandex(
+            search_result = await search_yandex(
                 query=query,
                 region=region,
                 groupby=urls_per_query,
@@ -478,7 +528,7 @@ async def get_top_results(
                 lang=lang,
             )
             
-            if xml_data:
+            if search_result['success'] and search_result['data']:
                 # Сохраняем примеры XML для отладки (первые 3 запроса)
                 if query_index <= 3:
                     try:
@@ -490,17 +540,18 @@ async def get_top_results(
                         filename = f"query_{query_index:02d}_{safe_query}.xml"
                         
                         with open(debug_dir / filename, 'w', encoding='utf-8') as f:
-                            f.write(xml_data)
+                            f.write(search_result['data'])
                         logger.debug(f"[DEBUG] Сохранен XML: xml_debug/{filename}")
                     except Exception as e:
                         logger.debug(f"[DEBUG] Не удалось сохранить XML: {e}")
                 
                 # Парсим XML и извлекаем URL (с debug режимом для первых 3 запросов)
-                urls = parse_yandex_xml(xml_data, urls_per_query, debug=(query_index <= 3))
+                urls = parse_yandex_xml(search_result['data'], urls_per_query, debug=(query_index <= 3))
                 logger.info(f"[QUERY {query_index}/{total_queries}] Найдено {len(urls)} URL")
                 return urls
             else:
-                logger.warning(f"[QUERY {query_index}/{total_queries}] Не получены данные")
+                error_msg = search_result.get('error', 'Unknown error')
+                logger.warning(f"[QUERY {query_index}/{total_queries}] Не получены данные: {error_msg}")
                 return []
     
     # Создаём задачи для всех запросов
@@ -548,7 +599,7 @@ if __name__ == "__main__":
     """
     # Загружаем данные из sheets_data.json
     logger.info("[TEST] Загрузка данных из jsontests/sheets_data.json...")
-    with open("jsontests/sheets_data.json", 'r', encoding='utf-8') as f:
+    with open("jsontests/step4_sheets_data_updated.json", 'r', encoding='utf-8') as f:
         sheets_data = json.load(f)
     
     # Подсчитываем статистику
@@ -572,7 +623,8 @@ if __name__ == "__main__":
         results = asyncio.run(process_sheets_data(
             sheets_data=sheets_data,
             default_region=213,
-            urls_per_query=5,  # Топ-10 от каждого запроса
+            urls_per_query=10,  # Топ-5 от каждого запроса
+            queries_per_url=4,  # Обрабатываем первые 4 запроса от каждого URL
             device="mobile",
             domain="ru",
             lang="ru",
@@ -582,17 +634,35 @@ if __name__ == "__main__":
         
         # Сохраняем результаты
         if results:
-            save_results_to_json(results, "jsontests/xmlriver_batch_results.json")
+            save_results_to_json(results, "jsontests/step5_filtered_urls.json")
             
             # Выводим статистику
             total_competitors = 0
             for spreadsheet_id, spreadsheet_info in results.items():
                 urls_dict = spreadsheet_info.get('urls', {})
                 for url, url_data in urls_dict.items():
-                    filtered_urls = url_data.get('filtered_urls', [])
-                    total_competitors += len(filtered_urls)
-                    logger.info(f"[TEST] {url}: {len(filtered_urls)} конкурентов")
+                    logger.info(f"[TEST] {url}:")
+                    
+                    # Подсчитываем уникальных конкурентов из всех queries
+                    unique_competitors = set()
+                    queries = url_data.get('queries', [])
+                    
+                    for query_item in queries:
+                        if isinstance(query_item, dict):
+                            query_text = query_item.get('query', 'N/A')
+                            filtered_urls = query_item.get('filtered_urls', [])
+                            filtered_count = len(filtered_urls)
+                            
+                            # Статистика по каждому запросу
+                            logger.info(f"[TEST]   - Запрос '{query_text}': {filtered_count} URL")
+                            
+                            # filtered_urls - это список строк (URL)
+                            unique_competitors.update(filtered_urls)
+                    
+                    url_competitors_count = len(unique_competitors)
+                    total_competitors += url_competitors_count
+                    logger.info(f"[TEST]   → Всего уникальных конкурентов: {url_competitors_count}")
             
-            logger.info(f"[TEST] Итого найдено {total_competitors} конкурентов для {total_urls} URL")
+            logger.info(f"[TEST] ИТОГО найдено {total_competitors} уникальных конкурентов для {total_urls} URL")
         else:
             logger.error("[TEST] Не получено результатов!")

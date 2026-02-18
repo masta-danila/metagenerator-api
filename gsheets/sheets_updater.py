@@ -13,8 +13,56 @@ import time
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from logger_config import get_sheets_updater_logger
+from utils.usd_rate_updater import get_usd_rate_with_markup
 
 logger = get_sheets_updater_logger()
+
+
+def col_index_to_letter(col_idx: int) -> str:
+    """
+    Конвертирует индекс колонки (0-based) в буквенную нотацию Google Sheets
+    
+    Args:
+        col_idx: Индекс колонки (0 = A, 1 = B, ..., 25 = Z, 26 = AA, ...)
+    
+    Returns:
+        str: Буквенная нотация (A, B, ..., Z, AA, AB, ...)
+    """
+    result = ""
+    col_idx += 1  # Делаем 1-based для удобства
+    
+    while col_idx > 0:
+        col_idx -= 1
+        result = chr(65 + (col_idx % 26)) + result
+        col_idx //= 26
+    
+    return result
+
+
+def extract_and_convert_cost(url_info: Dict, cost_key: str, usd_rate: float) -> float:
+    """
+    Извлекает стоимость из данных URL и конвертирует в рубли при необходимости
+    
+    Args:
+        url_info: Словарь с информацией о URL
+        cost_key: Ключ стоимости ('wordstat_cost', 'yandex_search_cost', и т.д.)
+        usd_rate: Курс USD для конвертации
+    
+    Returns:
+        float: Стоимость в рублях
+    """
+    cost_data = url_info.get(cost_key)
+    if not cost_data:
+        return 0.0
+    
+    cost = cost_data.get('cost', 0.0)
+    currency = cost_data.get('currency', 'RUB')
+    
+    # Если стоимость в USD - конвертируем в рубли
+    if currency == 'USD':
+        return cost * usd_rate
+    
+    return cost
 
 
 def get_sheets_client():
@@ -153,6 +201,62 @@ def update_spreadsheet_metatags(
         logger.info(f"[INFO] Найдены колонки: URL={url_col_idx}, H1={h1_col_idx}, Title={title_col_idx}, Description={description_col_idx}")
         logger.info(f"[INFO] В листе Meta найдено {len(url_to_row)} URL")
         
+        # Проверяем и создаем колонки стоимости
+        cost_columns = {
+            'Wordstat cost': None,
+            'Yandex search cost': None,
+            'Classification cost': None,
+            'Metageneration cost': None,
+            'Metatag editor cost': None,
+            'Cost': None
+        }
+        
+        # Проверяем наличие колонок
+        for col_name in cost_columns.keys():
+            if col_name in headers:
+                cost_columns[col_name] = headers.index(col_name)
+        
+        # Создаем отсутствующие колонки
+        new_columns = []
+        for col_name, col_idx in cost_columns.items():
+            if col_idx is None:
+                # Колонка не найдена - создаем
+                new_col_idx = len(headers)
+                headers.append(col_name)
+                cost_columns[col_name] = new_col_idx
+                new_columns.append((col_name, new_col_idx))
+                logger.info(f"[INFO] Создается колонка: {col_name} (индекс {new_col_idx})")
+        
+        # Добавляем заголовки новых колонок и делаем их жирными
+        if new_columns:
+            header_updates = []
+            for col_name, col_idx in new_columns:
+                col_letter = col_index_to_letter(col_idx)
+                header_updates.append({
+                    "range": f"{col_letter}1",
+                    "values": [[col_name]]
+                })
+            
+            # Применяем обновления заголовков
+            if header_updates:
+                worksheet.batch_update(header_updates)
+                logger.info(f"[OK] Добавлено {len(header_updates)} новых заголовков")
+        
+        # Делаем все заголовки колонок стоимости жирными (включая существующие)
+        for col_name, col_idx in cost_columns.items():
+            if col_idx is not None:
+                col_letter = col_index_to_letter(col_idx)
+                worksheet.format(f"{col_letter}1", {"textFormat": {"bold": True}})
+        logger.info(f"[OK] Заголовки колонок стоимости сделаны жирными")
+        
+        # Получаем курс USD для конвертации
+        try:
+            usd_rate = get_usd_rate_with_markup()
+            logger.info(f"[INFO] Курс USD с наценкой: {usd_rate:.4f} RUB")
+        except Exception as e:
+            logger.warning(f"[ПРЕДУПРЕЖДЕНИЕ] Не удалось получить курс USD: {e}. Используется курс по умолчанию 90.0")
+            usd_rate = 90.0
+        
         # Собираем все обновления и вставки в один батч
         batch_updates = []
         rows_to_append = []
@@ -210,6 +314,67 @@ def update_spreadsheet_metatags(
                         "values": [[generated["description"]]]
                     })
                 
+                # Обновляем колонки стоимости (всегда, не проверяя пустоту)
+                # Wordstat cost
+                wordstat_cost = extract_and_convert_cost(url_info, 'wordstat_cost', usd_rate)
+                col_idx = cost_columns.get('Wordstat cost')
+                if col_idx is not None:
+                    col_letter = col_index_to_letter(col_idx)
+                    url_updates.append({
+                        "range": f"{col_letter}{row_num}",
+                        "values": [[wordstat_cost]]
+                    })
+                
+                # Yandex search cost
+                yandex_search_cost = extract_and_convert_cost(url_info, 'yandex_search_cost', usd_rate)
+                col_idx = cost_columns.get('Yandex search cost')
+                if col_idx is not None:
+                    col_letter = col_index_to_letter(col_idx)
+                    url_updates.append({
+                        "range": f"{col_letter}{row_num}",
+                        "values": [[yandex_search_cost]]
+                    })
+                
+                # Classification cost
+                classification_cost = extract_and_convert_cost(url_info, 'classification_cost', usd_rate)
+                col_idx = cost_columns.get('Classification cost')
+                if col_idx is not None:
+                    col_letter = col_index_to_letter(col_idx)
+                    url_updates.append({
+                        "range": f"{col_letter}{row_num}",
+                        "values": [[classification_cost]]
+                    })
+                
+                # Metageneration cost
+                metageneration_cost = extract_and_convert_cost(url_info, 'metageneration_cost', usd_rate)
+                col_idx = cost_columns.get('Metageneration cost')
+                if col_idx is not None:
+                    col_letter = col_index_to_letter(col_idx)
+                    url_updates.append({
+                        "range": f"{col_letter}{row_num}",
+                        "values": [[metageneration_cost]]
+                    })
+                
+                # Metatag editor cost
+                metatag_editor_cost = extract_and_convert_cost(url_info, 'metatag_editor_cost', usd_rate)
+                col_idx = cost_columns.get('Metatag editor cost')
+                if col_idx is not None:
+                    col_letter = col_index_to_letter(col_idx)
+                    url_updates.append({
+                        "range": f"{col_letter}{row_num}",
+                        "values": [[metatag_editor_cost]]
+                    })
+                
+                # Total cost (сумма всех стоимостей)
+                total_cost = wordstat_cost + yandex_search_cost + classification_cost + metageneration_cost + metatag_editor_cost
+                col_idx = cost_columns.get('Cost')
+                if col_idx is not None:
+                    col_letter = col_index_to_letter(col_idx)
+                    url_updates.append({
+                        "range": f"{col_letter}{row_num}",
+                        "values": [[total_cost]]
+                    })
+                
                 # Добавляем обновления в общий батч
                 if url_updates:
                     batch_updates.extend(url_updates)
@@ -237,6 +402,43 @@ def update_spreadsheet_metatags(
                 new_row[h1_col_idx] = generated.get("h1", "")
                 new_row[title_col_idx] = generated.get("title", "")
                 new_row[description_col_idx] = generated.get("description", "")
+                
+                # Добавляем стоимости
+                # Wordstat cost
+                wordstat_cost = extract_and_convert_cost(url_info, 'wordstat_cost', usd_rate)
+                col_idx = cost_columns.get('Wordstat cost')
+                if col_idx is not None:
+                    new_row[col_idx] = wordstat_cost
+                
+                # Yandex search cost
+                yandex_search_cost = extract_and_convert_cost(url_info, 'yandex_search_cost', usd_rate)
+                col_idx = cost_columns.get('Yandex search cost')
+                if col_idx is not None:
+                    new_row[col_idx] = yandex_search_cost
+                
+                # Classification cost
+                classification_cost = extract_and_convert_cost(url_info, 'classification_cost', usd_rate)
+                col_idx = cost_columns.get('Classification cost')
+                if col_idx is not None:
+                    new_row[col_idx] = classification_cost
+                
+                # Metageneration cost
+                metageneration_cost = extract_and_convert_cost(url_info, 'metageneration_cost', usd_rate)
+                col_idx = cost_columns.get('Metageneration cost')
+                if col_idx is not None:
+                    new_row[col_idx] = metageneration_cost
+                
+                # Metatag editor cost
+                metatag_editor_cost = extract_and_convert_cost(url_info, 'metatag_editor_cost', usd_rate)
+                col_idx = cost_columns.get('Metatag editor cost')
+                if col_idx is not None:
+                    new_row[col_idx] = metatag_editor_cost
+                
+                # Total cost (сумма всех стоимостей)
+                total_cost = wordstat_cost + yandex_search_cost + classification_cost + metageneration_cost + metatag_editor_cost
+                col_idx = cost_columns.get('Cost')
+                if col_idx is not None:
+                    new_row[col_idx] = total_cost
                 
                 rows_to_append.append(new_row)
                 logger.info(f"[СОЗДАНИЕ] Новая строка для: {url}")
@@ -385,7 +587,7 @@ if __name__ == "__main__":
     )
     
     # Сохраняем статистику
-    output_file = project_root / "jsontests" / "sheets_update_stats.json"
+    output_file = project_root / "jsontests" / "metagenerator_batch_results.json"
     with open(output_file, "w", encoding="utf-8") as f:
         json.dump(stats, f, ensure_ascii=False, indent=2)
     

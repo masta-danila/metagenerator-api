@@ -3,7 +3,11 @@ import os
 from openai import OpenAI
 from dotenv import load_dotenv
 from datetime import datetime, time, timezone
-from llm_response_cleaner import clean_llm_content
+
+try:
+    from .llm_response_cleaner import clean_llm_content
+except ImportError:
+    from llm_response_cleaner import clean_llm_content
 
 
 def is_in_discount_time(discount_time_str: str) -> bool:

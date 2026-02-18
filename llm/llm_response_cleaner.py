@@ -6,8 +6,12 @@ def clean_llm_content(raw_content: str) -> str:
     """
     Принимает строку, которую может вернуть LLM (нейросеть) и которая
     потенциально содержит JSON, обёрнутый в ```json ... ``` и прочие
-    вспомогательные символы. Возвращает «очищенную» строку — либо
-    корректный JSON (в текстовом виде), либо исходный текст без обёрток.
+    вспомогательные символы. 
+    
+    ВАЖНО: Если в ответе несколько JSON объектов, берет ПОСЛЕДНИЙ валидный.
+    
+    Возвращает «очищенную» строку — либо корректный JSON (в текстовом виде), 
+    либо исходный текст без обёрток.
     """
 
     if not isinstance(raw_content, str):
@@ -18,10 +22,47 @@ def clean_llm_content(raw_content: str) -> str:
     content_without_backticks = re.sub(r'```$', '', content_without_backticks)
     content_without_backticks = content_without_backticks.strip()
 
-    # Убираем лишние \n, оставляя их внутри JSON
+    # Ищем все потенциальные JSON объекты (от { до })
+    # Если их несколько - берем ПОСЛЕДНИЙ валидный
+    json_objects = []
+    
+    # Находим все позиции открывающих скобок
+    i = 0
+    while i < len(content_without_backticks):
+        if content_without_backticks[i] == '{':
+            # Пытаемся найти соответствующую закрывающую скобку
+            brace_count = 0
+            start = i
+            
+            for j in range(i, len(content_without_backticks)):
+                if content_without_backticks[j] == '{':
+                    brace_count += 1
+                elif content_without_backticks[j] == '}':
+                    brace_count -= 1
+                    
+                    if brace_count == 0:
+                        # Нашли полный JSON объект
+                        potential_json = content_without_backticks[start:j+1]
+                        try:
+                            parsed = json.loads(potential_json)
+                            json_objects.append((start, j+1, parsed))
+                        except json.JSONDecodeError:
+                            pass
+                        break
+            
+            i = j + 1 if brace_count == 0 else i + 1
+        else:
+            i += 1
+    
+    # Если нашли JSON объекты - берем последний
+    if json_objects:
+        # Последний валидный JSON
+        _, _, last_json = json_objects[-1]
+        return json.dumps(last_json, ensure_ascii=False, indent=4)
+    
+    # Если JSON не найден - пробуем старый способ
     content_without_backticks = re.sub(r'(?<!\\)\n+', ' ', content_without_backticks)
-
-
+    
     try:
         parsed_json = json.loads(content_without_backticks)
         return json.dumps(parsed_json, ensure_ascii=False, indent=4)

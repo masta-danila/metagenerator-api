@@ -23,6 +23,15 @@ async def generate_seo_texts(
     h1_variables: List[str] = None,
     title_variables: List[str] = None,
     description_variables: List[str] = None,
+    example_titles: List[str] = None,
+    example_descriptions: List[str] = None,
+    example_h1s: List[str] = None,
+    current_h1: str = None,
+    max_title_length: int = None,
+    max_description_length: int = None,
+    use_main_query_in_h1: bool = True,
+    use_main_query_in_title: bool = True,
+    use_main_query_in_description: bool = True,
     model: str = "claude-sonnet-4-5-20250929"
 ) -> Dict[str, str]:
     """
@@ -37,6 +46,15 @@ async def generate_seo_texts(
         h1_variables: Список переменных Битрикса для h1 (например, ["#PRICE#", "#NAME#"])
         title_variables: Список переменных Битрикса для title (например, ["#PRICE#", "#NAME#"])
         description_variables: Список переменных Битрикса для description
+        example_titles: Примеры title от конкурентов (для ознакомления)
+        example_descriptions: Примеры description от конкурентов (для ознакомления)
+        example_h1s: Примеры h1 от конкурентов (для ознакомления)
+        current_h1: Текущий H1 страницы (для использования в качестве базы при генерации)
+        max_title_length: Максимальная длина Title в символах (если None, ограничение не указывается в промпте)
+        max_description_length: Максимальная длина Description в символах (если None, ограничение не указывается в промпте)
+        use_main_query_in_h1: Использовать ли основной запрос в требованиях к H1 (по умолчанию True)
+        use_main_query_in_title: Использовать ли основной запрос в требованиях к Title (по умолчанию True)
+        use_main_query_in_description: Использовать ли основной запрос в требованиях к Description (по умолчанию True)
         model: Модель LLM для генерации
     
     Returns:
@@ -51,52 +69,95 @@ async def generate_seo_texts(
     h1_word_count = random.randint(2, 5)
     selected_h1_words = h1_words[:h1_word_count] if len(h1_words) >= h1_word_count else h1_words
     
-    # Формируем промпт с условной логикой
-    prompt_parts = [
-        f"- основной запрос: {main_query}",
-        "- основной запрос используем ближе к началу в title и description",
-        f"- в h1 используем слова: {', '.join(selected_h1_words)}",
-        "- h1 должен быть кратким и емким",
-        "- в h1 название компании использовать не нужно",
-        "- в h1 и title нельзя дублировать слова (каждое слово используется только один раз)",
-    ]
+    # Формируем промпт с разделением на секции
+    prompt = "Напиши h1, title и description для страницы сайта.\n\n"
     
-    # Добавляем переменные для h1 только если они есть
+    # ========== СЕКЦИЯ 1: H1 ==========
+    prompt += "=== СЕКЦИЯ 1: H1 ===\n\n"
+    
+    # Примеры H1
+    if example_h1s:
+        prompt += "Примеры H1 от конкурентов (для ознакомления):\n"
+        for i, h1 in enumerate(example_h1s[:3], 1):
+            prompt += f"  {i}. {h1}\n"
+        prompt += "\n"
+    
+    # Текущий H1 (если есть)
+    if current_h1:
+        prompt += f"Текущий H1 на странице прими за базу с использованием всех его слов: {current_h1}\n\n"
+    
+    # Требования к H1
+    prompt += "Требования к H1:\n"
+    if use_main_query_in_h1:
+        prompt += f"- из основного запроса выдели ключевую СУЩНОСТЬ (главный объект/предмет) и используй слова, составляющие эту сущность по одному разу: {main_query}\n"
+    prompt += f"- используй все слова в текущем числе (мн или ед) по одному разу: {', '.join(selected_h1_words)}\n"
+    prompt += "- если удается обойтись приведенными выше словами (h1 выглядит логично и понятно), то не выдумывай и не добавляй новых слов\n"
+    prompt += f"- ВАЖНО: ЗАПРЕЩЕНО использовать название компании '{company_name}' или любые его части\n"
+    
     if h1_variables and len(h1_variables) > 0:
-        prompt_parts.append(
-            f"- в h1 используй переменные Битрикса: {', '.join(h1_variables)} (вставь их естественным образом в текст)"
-        )
+        prompt += f"- используй переменные Битрикса: {', '.join(h1_variables)} (естественным образом)\n"
     
-    prompt_parts.append(f"- в title используем слова: {', '.join(title_words)}")
-    prompt_parts.append("- title должен быть коммерчески привлекательным и побуждать к действию")
-    prompt_parts.append("- старайся обходиться без : и - в title")
+    prompt += "\n"
     
-    # Добавляем переменные для title только если они есть
+    # ========== СЕКЦИЯ 2: TITLE ==========
+    prompt += "=== СЕКЦИЯ 2: TITLE ===\n\n"
+    
+    # Примеры Title
+    if example_titles:
+        prompt += "Примеры Title от конкурентов (для ознакомления):\n"
+        for i, title in enumerate(example_titles[:3], 1):
+            prompt += f"  {i}. {title}\n"
+        prompt += "\n"
+    
+    # Требования к Title
+    prompt += "Требования к Title:\n"
+    if max_title_length:
+        prompt += f"- МАКСИМАЛЬНАЯ ДЛИНА: {max_title_length} символов (включая пробелы и переменные)\n"
+    if use_main_query_in_title:
+        prompt += f"- основной запрос используй ближе к началу: {main_query}\n"
+    prompt += f"- используй все слова в том числе (мн или ед) как они даны тут по одному разу: {', '.join(title_words)}\n"
+    prompt += "- title должен представлять собой ОДНО осмысленное законченное предложение\n"
+    prompt += "- должен быть коммерчески привлекательным и побуждать к действию\n"
+    prompt += "- старайся обходиться без : и -\n"
+    
     if title_variables and len(title_variables) > 0:
-        prompt_parts.append(
-            f"- в title используй переменные Битрикса: {', '.join(title_variables)} (вставь их естественным образом в текст)"
-        )
+        prompt += f"- используй переменные Битрикса: {', '.join(title_variables)} (естественным образом)\n"
     
-    prompt_parts.append(f"- в description используем слова: {', '.join(description_words)}")
+    prompt += f"- используй название компании: «{company_name}»\n"
+    prompt += "\n"
     
-    # Добавляем переменные для description только если они есть
+    # ========== СЕКЦИЯ 3: DESCRIPTION ==========
+    prompt += "=== СЕКЦИЯ 3: DESCRIPTION ===\n\n"
+    
+    # Примеры Description
+    if example_descriptions:
+        prompt += "Примеры Description от конкурентов (для ознакомления):\n"
+        for i, desc in enumerate(example_descriptions[:3], 1):
+            prompt += f"  {i}. {desc}\n"
+        prompt += "\n"
+    
+    # Требования к Description
+    prompt += "Требования к Description:\n"
+    if max_description_length:
+        prompt += f"- МАКСИМАЛЬНАЯ ДЛИНА: {max_description_length} символов (включая пробелы и переменные)\n"
+    if use_main_query_in_description:
+        prompt += f"- основной запрос используй ближе к началу: {main_query}\n"
+    prompt += f"- используй все слова в том числе (мн или ед) как они даны тут по одному разу: {', '.join(description_words)}\n"
+    prompt += "- description должен представлять собой одно или несколько осмысленных законченных предложений\n"
+    
     if description_variables and len(description_variables) > 0:
-        prompt_parts.append(
-            f"- в description используй переменные Битрикса: {', '.join(description_variables)} (вставь их естественным образом в текст)"
-        )
+        prompt += f"- используй переменные Битрикса: {', '.join(description_variables)} (естественным образом)\n"
     
-    prompt_parts.append(f"- используй в h1, title и description название компании: «{company_name}»")
-    prompt_parts.append("- ты можешь менять падежи и склонения слов для более естественного текста")
-    
-    # Собираем финальный промпт
-    prompt = "Напиши h1, title и description по следующим требованиям:\n" + "\n".join(prompt_parts)
+    prompt += f"- используй название компании: «{company_name}»\n"
+    prompt += "\n===\n"
     prompt += """
 
-Верни результат СТРОГО в формате JSON (без дополнительного текста):
+Верни результат СТРОГО в формате ЕДИНСТВЕННОГО JSON (без дополнительного текста):
 {
   "h1": "текст h1",
   "title": "текст title",
   "description": "текст description"
+В одном ответе СТРОГО один JSON!
 }"""
     
     # Запускаем синхронный llm_request в executor
@@ -162,7 +223,7 @@ if __name__ == "__main__":
         try:
             # Определяем пути относительно корня проекта
             project_root = Path(__file__).parent.parent
-            input_file = project_root / "jsontests" / "step4_lemmatized.json"
+            input_file = project_root / "jsontests" / "step11_lemmatized.json"
             output_file = project_root / "jsontests" / "metagenerator_test_results.json"
             
             # Загружаем данные из lemmatizer_processor_results.json
@@ -185,29 +246,117 @@ if __name__ == "__main__":
             url_data = data[spreadsheet_id]['urls'][target_url]
             
             # Извлекаем данные
-            title_words = url_data.get("lemmatized_title_words", [])
-            description_words = url_data.get("lemmatized_description_words", [])
-            h1_words = url_data.get("lemmatized_h1_words", [])
             company_name = url_data.get("company_name", "Ворота нам")
-            queries = url_data.get("queries", [])
-            main_query = queries[0] if queries else "ворота"
+            queries_list = url_data.get("queries", [])
+            
+            # Берем основной запрос из первого query
+            if queries_list and isinstance(queries_list[0], dict):
+                main_query = queries_list[0].get("query", "ворота")
+            else:
+                main_query = "ворота"
             
             # Переменные Битрикса
             h1_variables = url_data.get("variables_h1", [])
             title_variables = url_data.get("variables_title", [])
             description_variables = url_data.get("variables_description", [])
             
+            # Извлекаем текущий H1 страницы
+            current_meta = url_data.get("current_meta", {})
+            current_h1 = current_meta.get("h1", "") if current_meta else ""
+            
+            # Определяем тип основного URL
+            main_page_classification = url_data.get('page_classification', {})
+            main_page_type = main_page_classification.get('page_type') if main_page_classification else None
+            
+            # Собираем примеры от конкурентов с приоритетом по типу страницы
+            same_type_examples = {'titles': [], 'descriptions': [], 'h1s': []}
+            other_examples = {'titles': [], 'descriptions': [], 'h1s': []}
+            
+            for query_item in queries_list:
+                if isinstance(query_item, dict):
+                    filtered_urls = query_item.get('filtered_urls', [])
+                    for item in filtered_urls:
+                        if isinstance(item, dict) and 'competitor_meta' in item:
+                            # Пропускаем конкурентов с ошибками
+                            if 'error' in item or 'parsing_error' in item:
+                                continue
+                            
+                            competitor_meta = item['competitor_meta']
+                            if not competitor_meta:
+                                continue
+                            
+                            # Определяем тип конкурента
+                            page_classification = item.get('page_classification', {})
+                            page_type = page_classification.get('page_type') if page_classification else None
+                            
+                            # Выбираем группу для добавления
+                            is_same_type = (main_page_type and page_type == main_page_type)
+                            target = same_type_examples if is_same_type else other_examples
+                            
+                            # Добавляем в соответствующую группу
+                            if competitor_meta.get('title'):
+                                target['titles'].append(competitor_meta['title'])
+                            if competitor_meta.get('description'):
+                                target['descriptions'].append(competitor_meta['description'])
+                            if competitor_meta.get('h1'):
+                                target['h1s'].append(competitor_meta['h1'])
+            
+            # Формируем итоговые списки примеров: сначала с тем же типом, потом остальные
+            example_titles = same_type_examples['titles'][:3]
+            if len(example_titles) < 3:
+                example_titles.extend(other_examples['titles'][:3 - len(example_titles)])
+            
+            example_descriptions = same_type_examples['descriptions'][:3]
+            if len(example_descriptions) < 3:
+                example_descriptions.extend(other_examples['descriptions'][:3 - len(example_descriptions)])
+            
+            example_h1s = same_type_examples['h1s'][:3]
+            if len(example_h1s) < 3:
+                example_h1s.extend(other_examples['h1s'][:3 - len(example_h1s)])
+            
+            # Импортируем функцию лемматизации
+            sys.path.insert(0, str(project_root / "lemmatizers"))
+            from lemmatizer import find_common_words  # type: ignore
+            
+            # Извлекаем слова из ЭТИХ ЖЕ примеров, которые показываем в промпте
+            h1_words = find_common_words(
+                example_h1s,
+                min_frequency_percent=0.75
+            ) if example_h1s else []
+            
+            title_words = find_common_words(
+                example_titles,
+                min_frequency_percent=0.75
+            ) if example_titles else []
+            
+            description_words = find_common_words(
+                example_descriptions,
+                min_frequency_percent=0.75
+            ) if example_descriptions else []
+            
             print(f"\nВыбран случайный URL: {target_url}")
-            print(f"\nПараметры генерации:")
-            print(f"  Основной запрос: {main_query}")
-            print(f"  Компания: {company_name}")
-            print(f"  H1 words: {h1_words}")
-            print(f"  Title words: {title_words}")
-            print(f"  Description words: {description_words}")
-            print(f"  H1 variables: {h1_variables}")
-            print(f"  Title variables: {title_variables}")
-            print(f"  Description variables: {description_variables}")
-            print("\nОтправка запроса в LLM...")
+            print(f"Тип страницы: {main_page_type if main_page_type else 'Не определен'}")
+            print(f"Текущий H1: {current_h1 if current_h1 else 'Не найден'}")
+            
+            print(f"\n{'='*80}")
+            print("ИЗВЛЕЧЕННЫЕ СЛОВА ИЗ ПРИМЕРОВ:")
+            print(f"{'='*80}")
+            print(f"\nH1 words: {h1_words}")
+            print(f"Title words: {title_words}")
+            print(f"Description words: {description_words}")
+            
+            print(f"\n{'='*80}")
+            print("ПАРАМЕТРЫ ГЕНЕРАЦИИ:")
+            print(f"{'='*80}")
+            print(f"Основной запрос: {main_query}")
+            print(f"Компания: {company_name}")
+            print(f"H1 variables: {h1_variables}")
+            print(f"Title variables: {title_variables}")
+            print(f"Description variables: {description_variables}")
+            
+            print(f"\n{'='*80}")
+            print("Отправка запроса в LLM...")
+            print(f"{'='*80}")
             
             # Генерируем SEO-тексты
             seo_texts = await generate_seo_texts(
@@ -219,6 +368,15 @@ if __name__ == "__main__":
                 h1_variables=h1_variables,
                 title_variables=title_variables,
                 description_variables=description_variables,
+                example_titles=example_titles,
+                example_descriptions=example_descriptions,
+                example_h1s=example_h1s,
+                current_h1=current_h1,
+                max_title_length=80,
+                max_description_length=150,
+                use_main_query_in_h1=True,
+                use_main_query_in_title=True,
+                use_main_query_in_description=True,
                 model="claude-sonnet-4-5-20250929"
             )
             
@@ -232,7 +390,12 @@ if __name__ == "__main__":
                 "main_query": main_query,
                 "h1_variables": h1_variables,
                 "title_variables": title_variables,
-                "description_variables": description_variables
+                "description_variables": description_variables,
+                "examples_count": {
+                    "h1": len(example_h1s),
+                    "title": len(example_titles),
+                    "description": len(example_descriptions)
+                }
             }
             
             # Сохраняем результат

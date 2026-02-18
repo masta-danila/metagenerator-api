@@ -89,8 +89,7 @@ def load_spreadsheet_ids() -> List[str]:
 def update_data_sheet_with_frequency(
     spreadsheet_id: str,
     frequency_data: Dict,
-    client: Optional[gspread.Client] = None,
-    dry_run: bool = False
+    client: Optional[gspread.Client] = None
 ) -> Dict:
     """
     Обновляет лист Data в таблице, сортируя запросы по частотности
@@ -103,7 +102,6 @@ def update_data_sheet_with_frequency(
         spreadsheet_id: ID таблицы Google Sheets
         frequency_data: Словарь с данными частотности из wordstat_batch_result.json
         client: Клиент gspread (если None - создается новый)
-        dry_run: Если True - только показывает изменения без применения
     
     Returns:
         Dict: Статистика обновления
@@ -146,6 +144,7 @@ def update_data_sheet_with_frequency(
             url_idx = headers.index('URL') if 'URL' in headers else headers.index('url')
             queries_idx = headers.index('Querries') if 'Querries' in headers else headers.index('querries')
             demand_idx = headers.index('Demand') if 'Demand' in headers else None
+            cost_idx = headers.index('Cost') if 'Cost' in headers else None
         except ValueError as e:
             logger.error(f"Не найдена обязательная колонка: {e}")
             return {
@@ -156,6 +155,25 @@ def update_data_sheet_with_frequency(
         
         if demand_idx is None:
             logger.warning(f"Колонка 'Demand' не найдена в таблице {spreadsheet.title}, частотность не будет обновлена")
+        
+        # Проверяем наличие колонки Cost, если нет - создаем
+        if cost_idx is None:
+            logger.info(f"Колонка 'Cost' не найдена в таблице {spreadsheet.title}, создаем...")
+            # Добавляем заголовок в следующую свободную колонку
+            cost_idx = len(headers)
+            cost_col_letter = col_index_to_letter(cost_idx)
+            data_sheet.update(f'{cost_col_letter}1', [['Cost']])
+            
+            # Делаем заголовок жирным
+            data_sheet.format(f'{cost_col_letter}1', {
+                'textFormat': {
+                    'bold': True
+                }
+            })
+            
+            logger.info(f"Колонка 'Cost' создана: {cost_col_letter}")
+        else:
+            logger.info(f"Колонка 'Cost' найдена в таблице {spreadsheet.title}")
         
         # Получаем данные частотности для этой таблицы
         urls_with_frequency = frequency_data.get(spreadsheet_id, {}).get('urls', {})
@@ -212,6 +230,7 @@ def update_data_sheet_with_frequency(
                     query_item = sorted_queries[i]
                     query_text = query_item.get('query', '')
                     frequency = query_item.get('frequency')
+                    wordstat_cost = query_item.get('wordstat_cost', 0)
                     
                     # Обновляем колонку Querries
                     queries_col_letter = col_index_to_letter(queries_idx)
@@ -233,6 +252,18 @@ def update_data_sheet_with_frequency(
                             'values': [[frequency_text]]
                         })
                     
+                    # Обновляем колонку Cost ТОЛЬКО если есть данные по стоимости
+                    # Если wordstat_cost отсутствует или равен 0 - оставляем существующее значение в таблице
+                    if cost_idx is not None and wordstat_cost is not None and wordstat_cost > 0:
+                        cost_col_letter = col_index_to_letter(cost_idx)
+                        cost_cell_range = f'{cost_col_letter}{row_idx}'
+                        cost_text = str(wordstat_cost)
+                        
+                        updates.append({
+                            'range': cost_cell_range,
+                            'values': [[cost_text]]
+                        })
+                    
                     stats['rows_updated'] += 1
             
             stats['urls_updated'] += 1
@@ -240,18 +271,18 @@ def update_data_sheet_with_frequency(
         
         # Применяем все обновления одним batch запросом
         if updates:
-            if dry_run:
-                logger.info(f"[DRY-RUN] Будет применено {len(updates)} обновлений к листу Data")
-                logger.info(f"[DRY-RUN] Обновляются колонки: Querries" + (" и Demand" if demand_idx is not None else ""))
-                logger.info(f"[DRY-RUN] Первые 5 обновлений:")
-                for update in updates[:5]:
-                    value_preview = update['values'][0][0][:100] if update['values'][0][0] else '(пусто)'
-                    logger.info(f"  {update['range']}: {value_preview}...")
-            else:
-                logger.info(f"Применение {len(updates)} обновлений к листу Data...")
-                logger.info(f"Обновляются колонки: Querries" + (" и Demand" if demand_idx is not None else ""))
-                data_sheet.batch_update(updates)
-                logger.info(f"Успешно обновлено {len(updates)} ячеек")
+            logger.info(f"Применение {len(updates)} обновлений к листу Data...")
+            
+            # Формируем список обновляемых колонок
+            updated_columns = ['Querries']
+            if demand_idx is not None:
+                updated_columns.append('Demand')
+            if cost_idx is not None:
+                updated_columns.append('Cost')
+            
+            logger.info(f"Обновляются колонки: {', '.join(updated_columns)}")
+            data_sheet.batch_update(updates)
+            logger.info(f"Успешно обновлено {len(updates)} ячеек")
         else:
             logger.info("Нет обновлений для применения")
         
@@ -270,13 +301,12 @@ def update_data_sheet_with_frequency(
         }
 
 
-def update_all_data_sheets(frequency_data: Dict, dry_run: bool = False) -> Dict:
+def update_all_data_sheets(frequency_data: Dict) -> Dict:
     """
     Обновляет листы Data во всех таблицах из spreadsheets.json
     
     Args:
         frequency_data: Словарь с данными частотности из wordstat_batch_result.json
-        dry_run: Если True - только показывает изменения без применения
     
     Returns:
         Dict: Общая статистика обновлений
@@ -299,15 +329,12 @@ def update_all_data_sheets(frequency_data: Dict, dry_run: bool = False) -> Dict:
     }
     
     for spreadsheet_id in spreadsheet_ids:
-        logger.info(f"\n{'='*60}")
         logger.info(f"Обработка таблицы: {spreadsheet_id}")
-        logger.info(f"{'='*60}")
         
         result = update_data_sheet_with_frequency(
             spreadsheet_id=spreadsheet_id,
             frequency_data=frequency_data,
-            client=client,
-            dry_run=dry_run
+            client=client
         )
         
         results.append(result)
@@ -323,9 +350,7 @@ def update_all_data_sheets(frequency_data: Dict, dry_run: bool = False) -> Dict:
             logger.info(f"Обновлено URL: {result.get('stats', {}).get('urls_updated', 0)}")
             logger.info(f"Пропущено URL: {result.get('stats', {}).get('urls_skipped', 0)}")
     
-    logger.info(f"\n{'='*60}")
     logger.info("ИТОГОВАЯ СТАТИСТИКА")
-    logger.info(f"{'='*60}")
     logger.info(f"Всего таблиц: {total_stats['total_spreadsheets']}")
     logger.info(f"Успешно обновлено: {total_stats['successful_updates']}")
     logger.info(f"Ошибок: {total_stats['failed_updates']}")
@@ -344,14 +369,8 @@ if __name__ == "__main__":
     и обновляет листы Data во всех таблицах
     
     Использование:
-        python gsheets/data_updater.py            # DRY-RUN режим (только просмотр)
-        python gsheets/data_updater.py --apply    # Реальное обновление
+        python gsheets/data_updater.py
     """
-    import sys
-    
-    # Проверяем, нужно ли применять изменения
-    dry_run = '--apply' not in sys.argv
-    
     # Загружаем данные с частотностью
     project_root = Path(__file__).parent.parent
     input_file = project_root / "jsontests" / "wordstat_batch_result.json"
@@ -361,22 +380,9 @@ if __name__ == "__main__":
     with open(input_file, 'r', encoding='utf-8') as f:
         frequency_data = json.load(f)
     
-    logger.info("="*60)
-    if dry_run:
-        logger.info("РЕЖИМ DRY-RUN (только просмотр, без изменений)")
-        logger.info("Для реального обновления используйте: --apply")
-    else:
-        logger.info("ЗАПУСК ОБНОВЛЕНИЯ ЛИСТОВ DATA")
-        logger.info("ВНИМАНИЕ: Будут применены реальные изменения!")
-    logger.info("="*60)
+    logger.info("ЗАПУСК ОБНОВЛЕНИЯ ЛИСТОВ DATA")
     
     # Обновляем все таблицы
-    result = update_all_data_sheets(frequency_data, dry_run=dry_run)
+    result = update_all_data_sheets(frequency_data)
     
-    logger.info("="*60)
-    if dry_run:
-        logger.info("DRY-RUN ЗАВЕРШЕН")
-        logger.info("Для реального обновления запустите с флагом --apply")
-    else:
-        logger.info("ОБНОВЛЕНИЕ ЗАВЕРШЕНО")
-    logger.info("="*60)
+    logger.info("ОБНОВЛЕНИЕ ЗАВЕРШЕНО")

@@ -112,13 +112,14 @@ async def process_sheets_data_wordstat(
             
             frequency = result.get('frequency')
             error = result.get('error')
+            api_requests = result.get('api_requests', 0)
             
             if error:
                 logger.error(f"[QUERY {query_index}/{total_queries}] ОШИБКА: {error}")
-                return query, None
+                return query, None, api_requests
             else:
                 logger.info(f"[QUERY {query_index}/{total_queries}] Частота: {frequency:,}")
-                return query, frequency
+                return query, frequency, api_requests
     
     # Создаём задачи только для запросов без частотности
     tasks = []
@@ -130,13 +131,33 @@ async def process_sheets_data_wordstat(
     logger.info(f"[STEP 2] Запуск {len(tasks)} задач (до {max_concurrent} одновременно)...")
     query_results = await asyncio.gather(*tasks)
     
-    # Создаём маппинг: запрос → частотность
-    query_frequencies = {query: freq for query, freq in query_results}
+    # Создаём маппинг: запрос → частотность и запрос → api_requests
+    query_frequencies = {}
+    query_api_requests = {}
+    total_api_requests = 0
+    for query, freq, api_requests in query_results:
+        query_frequencies[query] = freq
+        query_api_requests[query] = api_requests
+        total_api_requests += api_requests
     
-    successful = sum(1 for _, freq in query_results if freq is not None)
+    logger.info(f"[STEP 2] Обработано запросов. Всего API запросов: {total_api_requests}")
+    
+    successful = sum(1 for _, freq, _ in query_results if freq is not None)
     failed = len(query_results) - successful
     
     logger.info(f"[STEP 2] Завершено: {successful} успешно, {failed} ошибок")
+    
+    # Загружаем прайс для расчета стоимости
+    pricing_file = Path(__file__).parent / "xmlriver_pricing.json"
+    try:
+        with open(pricing_file, 'r', encoding='utf-8') as f:
+            pricing_data = json.load(f)
+            price_per_request = pricing_data.get('price_per_request', 0.025)
+            currency = pricing_data.get('currency', 'RUB')
+    except Exception as e:
+        logger.warning(f"Не удалось загрузить прайс из {pricing_file}: {e}. Используем значения по умолчанию.")
+        price_per_request = 0.025
+        currency = 'RUB'
     
     # Шаг 3: Добавляем частотность обратно в структуру данных
     logger.info(f"[STEP 3] Добавление частотности в структуру данных...")
@@ -154,16 +175,29 @@ async def process_sheets_data_wordstat(
             
             # Обрабатываем queries: сохраняем существующую частотность или добавляем новую
             queries_with_frequency = []
+            url_total_api_requests = 0  # Счетчик API запросов для этого URL
+            
             for query_item in url_data.get('queries', []):
                 # Запрос может быть строкой или объектом
                 if isinstance(query_item, str):
                     # Строка - получаем частотность из новых данных
                     query_text = query_item
                     frequency = query_frequencies.get(query_text)
+                    
+                    # Получаем информацию о стоимости для этого запроса
+                    query_requests = query_api_requests.get(query_text, 0)
+                    query_cost = query_requests * price_per_request
+                    
                     queries_with_frequency.append({
                         'query': query_text,
-                        'frequency': frequency
+                        'frequency': frequency,
+                        'wordstat_api_requests': query_requests,
+                        'wordstat_cost': round(query_cost, 4)
                     })
+                    
+                    # Накапливаем API запросы для URL
+                    url_total_api_requests += query_requests
+                    
                 elif isinstance(query_item, dict):
                     # Объект - проверяем, есть ли уже частотность
                     query_text = query_item.get('query')
@@ -171,20 +205,44 @@ async def process_sheets_data_wordstat(
                     
                     if existing_frequency is not None:
                         # Частотность уже есть - сохраняем её
+                        # Для существующих частотностей API запросов не было
                         queries_with_frequency.append({
                             'query': query_text,
-                            'frequency': existing_frequency
+                            'frequency': existing_frequency,
+                            'wordstat_api_requests': 0,
+                            'wordstat_cost': 0
                         })
                     else:
                         # Частотности нет - берём из новых данных
                         new_frequency = query_frequencies.get(query_text)
+                        
+                        # Получаем информацию о стоимости для этого запроса
+                        query_requests = query_api_requests.get(query_text, 0)
+                        query_cost = query_requests * price_per_request
+                        
                         queries_with_frequency.append({
                             'query': query_text,
-                            'frequency': new_frequency
+                            'frequency': new_frequency,
+                            'wordstat_api_requests': query_requests,
+                            'wordstat_cost': round(query_cost, 4)
                         })
+                        
+                        # Накапливаем API запросы для URL
+                        url_total_api_requests += query_requests
+            
+            # Рассчитываем стоимость для этого URL
+            url_cost = url_total_api_requests * price_per_request
             
             # Заменяем queries на обновлённый массив
             new_url_data['queries'] = queries_with_frequency
+            
+            # Добавляем информацию о стоимости Wordstat
+            new_url_data['wordstat_cost'] = {
+                'api_requests': url_total_api_requests,
+                'cost': round(url_cost, 4),
+                'currency': currency
+            }
+            
             result_data[spreadsheet_id]['urls'][url] = new_url_data
     
     logger.info(f"[COMPLETE] Обработка завершена!")
@@ -214,9 +272,7 @@ if __name__ == "__main__":
             sheets_data = json.load(f)
         
         # Обрабатываем данные
-        logger.info("="*60)
         logger.info("ЗАПУСК МАССОВОЙ ПРОВЕРКИ ЧАСТОТНОСТИ")
-        logger.info("="*60)
         
         result = await process_sheets_data_wordstat(
             sheets_data=sheets_data,
@@ -233,8 +289,6 @@ if __name__ == "__main__":
         with open(output_file, 'w', encoding='utf-8') as f:
             json.dump(result, f, ensure_ascii=False, indent=2)
         
-        logger.info("="*60)
         logger.info(f"Результат сохранен в: {output_file}")
-        logger.info("="*60)
     
     asyncio.run(test())

@@ -1,8 +1,16 @@
-from gpt_request import request_gpt
-from deepseek_request import request_deepseek
-from claude_request import request_claude
-# from gemini_request import request_gemini  # Временно отключено
-from grok_request import request_grok
+try:
+    from .gpt_request import request_gpt
+    from .deepseek_request import request_deepseek
+    from .claude_request import request_claude
+    # from .gemini_request import request_gemini  # Временно отключено
+    from .grok_request import request_grok
+except ImportError:
+    # Если запускаем напрямую
+    from gpt_request import request_gpt
+    from deepseek_request import request_deepseek
+    from claude_request import request_claude
+    # from gemini_request import request_gemini  # Временно отключено
+    from grok_request import request_grok
 
 
 def llm_request(model: str, messages: list) -> dict:

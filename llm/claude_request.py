@@ -2,7 +2,11 @@ import json
 import os
 import anthropic
 from dotenv import load_dotenv
-from llm_response_cleaner import clean_llm_content
+
+try:
+    from .llm_response_cleaner import clean_llm_content
+except ImportError:
+    from llm_response_cleaner import clean_llm_content
 
 
 def request_claude(model: str, messages: list[dict]) -> dict:

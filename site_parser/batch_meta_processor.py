@@ -1,322 +1,212 @@
 """
-Batch обработка URL для извлечения метатегов
+Batch обработка для извлечения метатегов из сжатой HTML структуры
+(HTML уже сжат после parse_for_ml, здесь только извлекаются метатеги)
 """
 import json
-import asyncio
-import time
 import sys
-import warnings
-from typing import Dict, List, Set
-from urllib.parse import urlparse
+from typing import Dict
 from pathlib import Path
-import httpx
-
-# Подавляем предупреждения SSL
-warnings.filterwarnings('ignore', message='Unverified HTTPS request')
 
 # Добавляем корень проекта в путь для импорта
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 try:
-    from .html_parser import parse_for_ml
     from .meta_extractor import extract_meta
     from logger_config import get_batch_meta_logger
     logger = get_batch_meta_logger()
 except ImportError:
     # Если запускаем напрямую, используем абсолютные импорты
-    from site_parser.html_parser import parse_for_ml
     from site_parser.meta_extractor import extract_meta
     from logger_config import get_batch_meta_logger
     logger = get_batch_meta_logger()
 
 
-class DomainRateLimiter:
-    """Контролирует паузы между запросами к одному домену"""
-    
-    def __init__(self, delay_seconds: float = 1.0):
-        self.delay_seconds = delay_seconds
-        self.last_request_time: Dict[str, float] = {}
-        self._lock = asyncio.Lock()
-    
-    def get_domain(self, url: str) -> str:
-        """Извлекает домен из URL"""
-        try:
-            parsed = urlparse(url)
-            domain = parsed.netloc.lower()
-            # Убираем www.
-            if domain.startswith('www.'):
-                domain = domain[4:]
-            return domain
-        except:
-            return url
-    
-    async def wait_if_needed(self, url: str):
-        """Ждет, если нужно, перед запросом к домену"""
-        domain = self.get_domain(url)
-        
-        async with self._lock:
-            if domain in self.last_request_time:
-                elapsed = time.time() - self.last_request_time[domain]
-                if elapsed < self.delay_seconds:
-                    wait_time = self.delay_seconds - elapsed
-                    await asyncio.sleep(wait_time)
-            
-            self.last_request_time[domain] = time.time()
-
-
-async def process_single_url(
-    url: str,
-    rate_limiter: DomainRateLimiter,
-    http_client,
-    url_index: int,
-    total_urls: int
-) -> Dict:
+def extract_meta_from_filtered_urls(data: Dict) -> Dict:
     """
-    Обрабатывает один URL: парсит HTML и извлекает метатеги
+    Извлекает метатеги из сжатой HTML структуры в filtered_urls
+    
+    ВАЖНО: HTML уже сжат после parse_for_ml, здесь только извлекаются метатеги
     
     Args:
-        url: URL для обработки
-        rate_limiter: Контроллер пауз между запросами
-        http_client: httpx.AsyncClient для переиспользования соединений
-        url_index: Индекс URL (для логирования)
-        total_urls: Общее количество URL
-        
+        data: Словарь структуры {spreadsheet_id: {urls: {url: {queries: [{filtered_urls: [...]}]}}}}
+    
     Returns:
-        Словарь с метатегами или None при ошибке
+        Обновленный словарь с добавленными метатегами (title, description, h1)
     """
-    # Ждем, если нужно (пауза между запросами к одному домену)
-    await rate_limiter.wait_if_needed(url)
+    logger.info("Начало извлечения метатегов из сжатой HTML структуры")
     
-    logger.info(f"[{url_index}/{total_urls}] Обработка: {url}")
+    # Копируем исходные данные
+    import copy
+    result_data = copy.deepcopy(data)
     
-    try:
-        # Парсим HTML (передаем клиент для переиспользования)
-        parsed_data = await parse_for_ml(url, client=http_client)
-        
-        if not parsed_data:
-            logger.warning(f"[{url_index}/{total_urls}] Ошибка парсинга: {url}")
-            return None
-        
-        # Извлекаем метатеги
-        html_structure = parsed_data.get('html_structure', '')
-        meta_tags = extract_meta(html_structure)
-        
-        logger.info(f"[{url_index}/{total_urls}] Успешно: {url}")
-        logger.debug(f"    Title: {meta_tags['title'][:50] if meta_tags['title'] else 'N/A'}...")
-        logger.debug(f"    H1: {meta_tags['h1'][:50] if meta_tags['h1'] else 'N/A'}...")
-        
-        return meta_tags
-        
-    except Exception as e:
-        logger.error(f"[{url_index}/{total_urls}] Ошибка: {url} - {e}")
-        return None
-
-
-async def process_batch_urls(
-    batch_data: Dict,
-    max_concurrent: int = 5,
-    domain_delay: float = 1.0
-) -> Dict:
-    """
-    Обрабатывает все уникальные filtered_urls из batch_data
+    total_urls = 0
+    processed = 0
+    with_meta = 0
+    errors = 0
     
-    Args:
-        batch_data: Словарь из xmlriver_batch_results.json
-        max_concurrent: Максимальное количество одновременных запросов
-        domain_delay: Пауза между запросами к одному домену (в секундах)
-        
-    Returns:
-        Обновленный словарь с метатегами для каждого filtered_url
-    """
-    logger.info("="*60)
-    logger.info("Параметры обработки:")
-    logger.info(f"  - Максимум потоков: {max_concurrent}")
-    logger.info(f"  - Пауза между запросами к домену: {domain_delay}s")
-    logger.info("="*60)
+    main_urls_total = 0
+    main_urls_with_meta = 0
+    main_urls_errors = 0
     
-    # Шаг 1: Собираем все уникальные filtered_urls
-    all_filtered_urls: Set[str] = set()
-    
-    for spreadsheet_id, spreadsheet_info in batch_data.items():
-        urls_dict = spreadsheet_info.get('urls', {})
-        for main_url, url_data in urls_dict.items():
-            filtered_urls = url_data.get('filtered_urls', [])
-            for item in filtered_urls:
-                # Поддерживаем два формата: строки и словари
-                if isinstance(item, str):
-                    all_filtered_urls.add(item)
-                elif isinstance(item, dict):
-                    url = item.get('url')
-                    if url:
-                        all_filtered_urls.add(url)
-    
-    unique_urls = list(all_filtered_urls)
-    logger.info(f"[STEP 1] Собрано {len(unique_urls)} уникальных URL для обработки")
-    
-    if not unique_urls:
-        logger.warning("Нет URL для обработки")
-        return batch_data
-    
-    # Шаг 2: Обрабатываем все URL параллельно
-    logger.info(f"[STEP 2] Запуск обработки (макс. {max_concurrent} одновременно)...")
-    
-    semaphore = asyncio.Semaphore(max_concurrent)
-    rate_limiter = DomainRateLimiter(delay_seconds=domain_delay)
-    
-    # Создаем один общий HTTP клиент с увеличенным лимитом соединений
-    headers = {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
-    }
-    
-    # Увеличиваем лимиты соединений для поддержки большого числа потоков
-    limits = httpx.Limits(
-        max_connections=max_concurrent * 2,  # Общее количество соединений
-        max_keepalive_connections=max_concurrent,  # Keep-alive соединения
-    )
-    
-    async with httpx.AsyncClient(
-        timeout=30.0,
-        follow_redirects=True,
-        verify=False,  # Отключаем проверку SSL
-        headers=headers,
-        limits=limits
-    ) as http_client:
-        
-        async def process_with_semaphore(url: str, url_index: int):
-            async with semaphore:
-                return await process_single_url(url, rate_limiter, http_client, url_index, len(unique_urls))
-        
-        # Создаем задачи для всех URL
-        tasks = []
-        for url_index, url in enumerate(unique_urls, 1):
-            task = process_with_semaphore(url, url_index)
-            tasks.append(task)
-        
-        # Выполняем все задачи параллельно
-        results = await asyncio.gather(*tasks)
-    
-    # Создаем маппинг: URL -> метатеги
-    url_to_meta = {}
-    successful_count = 0
-    for url, meta_tags in zip(unique_urls, results):
-        if meta_tags:
-            url_to_meta[url] = meta_tags
-            successful_count += 1
-    
-    logger.info("[STEP 2] Обработка завершена!")
-    logger.info(f"  - Успешно: {successful_count}/{len(unique_urls)}")
-    logger.info(f"  - Ошибок: {len(unique_urls) - successful_count}")
-    
-    # Шаг 3: Добавляем метатеги обратно в batch_data
-    logger.info("[STEP 3] Добавление метатегов в результат...")
-    
-    result_data = {}
-    
-    for spreadsheet_id, spreadsheet_info in batch_data.items():
+    for spreadsheet_id, spreadsheet_info in data.items():
         urls_dict = spreadsheet_info.get('urls', {})
         
-        result_urls = {}
         for main_url, url_data in urls_dict.items():
-            filtered_urls = url_data.get('filtered_urls', [])
+            # Копируем html_structure и parsing_error основного URL (если есть)
+            if 'html_structure' in url_data:
+                result_data[spreadsheet_id]['urls'][main_url]['html_structure'] = url_data['html_structure']
             
-            # Обновляем каждый filtered_url метатегами
-            updated_filtered_urls = []
-            for item in filtered_urls:
-                if isinstance(item, str):
-                    # Формат: простая строка URL
-                    if item in url_to_meta:
-                        # Преобразуем в словарь с метатегами
-                        updated_data = {
-                            'url': item,
-                            'meta': url_to_meta[item]
-                        }
-                        updated_filtered_urls.append(updated_data)
-                    else:
-                        # Оставляем как строку (если не удалось спарсить)
-                        updated_filtered_urls.append(item)
-                elif isinstance(item, dict):
-                    # Формат: словарь с ключом 'url'
-                    url = item.get('url')
-                    if url and url in url_to_meta:
-                        # Добавляем метатеги
-                        updated_data = {
-                            **item,
-                            'meta': url_to_meta[url]
-                        }
-                        updated_filtered_urls.append(updated_data)
-                    else:
-                        # Оставляем без изменений
-                        updated_filtered_urls.append(item)
-                else:
-                    updated_filtered_urls.append(item)
+            if 'parsing_error' in url_data:
+                result_data[spreadsheet_id]['urls'][main_url]['parsing_error'] = url_data['parsing_error']
             
-            result_urls[main_url] = {
-                **url_data,
-                'filtered_urls': updated_filtered_urls
-            }
-        
-        result_data[spreadsheet_id] = {
-            **spreadsheet_info,
-            'urls': result_urls
-        }
+            # Извлекаем метатеги основного URL (если есть HTML и нет ошибки парсинга)
+            html_structure = url_data.get('html_structure', '')
+            parsing_error = url_data.get('parsing_error')
+            
+            main_urls_total += 1
+            
+            if html_structure and not parsing_error:
+                try:
+                    meta_tags = extract_meta(html_structure)
+                    result_data[spreadsheet_id]['urls'][main_url]['current_meta'] = {
+                        'title': meta_tags.get('title', ''),
+                        'description': meta_tags.get('description', ''),
+                        'h1': meta_tags.get('h1', '')
+                    }
+                    main_urls_with_meta += 1
+                    logger.debug(f"[MAIN URL] Извлечены метатеги для {main_url}")
+                except Exception as e:
+                    logger.error(f"[MAIN URL ERROR] Ошибка извлечения метатегов для {main_url}: {str(e)}")
+                    result_data[spreadsheet_id]['urls'][main_url]['current_meta'] = {
+                        'title': '',
+                        'description': '',
+                        'h1': '',
+                        'error': str(e)
+                    }
+                    main_urls_errors += 1
+            elif parsing_error:
+                logger.debug(f"[MAIN URL SKIP] {main_url}: есть ошибка парсинга")
+                main_urls_errors += 1
+            else:
+                logger.debug(f"[MAIN URL SKIP] {main_url}: нет HTML структуры")
+                main_urls_errors += 1
+            
+            queries = url_data.get('queries', [])
+            
+            for query_idx, query_item in enumerate(queries):
+                if isinstance(query_item, dict):
+                    filtered_urls = query_item.get('filtered_urls', [])
+                    
+                    updated_filtered = []
+                    
+                    for filtered_url_item in filtered_urls:
+                        total_urls += 1
+                        
+                        if isinstance(filtered_url_item, dict):
+                            url = filtered_url_item.get('url', '')
+                            html_structure = filtered_url_item.get('html_structure', '')
+                            error = filtered_url_item.get('error') or filtered_url_item.get('parsing_error')
+                            
+                            # Если есть ошибка или нет HTML, пропускаем извлечение метатегов
+                            if error or not html_structure:
+                                if error:
+                                    errors += 1
+                                    logger.warning(f"[SKIP] {url}: {error}")
+                                
+                                # Сохраняем как есть
+                                updated_filtered.append(filtered_url_item)
+                                processed += 1
+                                continue
+                            
+                            # Извлекаем метатеги (HTML уже сжат после parse_for_ml)
+                            try:
+                                meta_tags = extract_meta(html_structure)
+                                
+                                # Добавляем извлеченные метатеги
+                                updated_item = {
+                                    **filtered_url_item,
+                                    'competitor_meta': {
+                                        'title': meta_tags.get('title', ''),
+                                        'description': meta_tags.get('description', ''),
+                                        'h1': meta_tags.get('h1', '')
+                                    }
+                                }
+                                
+                                updated_filtered.append(updated_item)
+                                with_meta += 1
+                                processed += 1
+                                
+                                if processed % 100 == 0:
+                                    logger.info(f"[PROGRESS] Обработано {processed}/{total_urls} URL")
+                                
+                            except Exception as e:
+                                logger.error(f"[ERROR] Ошибка обработки HTML для {url}: {str(e)}")
+                                # Сохраняем с ошибкой
+                                updated_filtered.append({
+                                    **filtered_url_item,
+                                    'processing_error': str(e)
+                                })
+                                errors += 1
+                                processed += 1
+                        else:
+                            # Это строка, а не словарь - пропускаем
+                            updated_filtered.append(filtered_url_item)
+                            processed += 1
+                    
+                    # Обновляем filtered_urls в результате
+                    result_data[spreadsheet_id]['urls'][main_url]['queries'][query_idx]['filtered_urls'] = updated_filtered
     
-    logger.info("[STEP 3] Метатеги добавлены!")
+    logger.info("Извлечение метатегов завершено:")
+    logger.info(f"Основные URL:")
+    logger.info(f"- Всего: {main_urls_total}")
+    logger.info(f"- С метатегами: {main_urls_with_meta}")
+    logger.info(f"- Ошибок/пропущено: {main_urls_errors}")
+    logger.info(f"URL конкурентов (filtered_urls):")
+    logger.info(f"- Всего: {total_urls}")
+    logger.info(f"- Обработано: {processed}")
+    logger.info(f"- С метатегами: {with_meta}")
+    logger.info(f"- Ошибок: {errors}")
     
     return result_data
 
 
-def save_results_to_json(results: Dict, filename: str = "jsontests/xmlriver_batch_results_with_meta.json"):
+def save_results(
+    results: Dict,
+    output_path: str = "jsontests/batch_meta_extracted_results.json"
+) -> None:
     """
-    Сохраняет результаты в JSON файл
+    Сохраняет результаты извлечения метатегов в JSON файл
     
     Args:
-        results: Результаты обработки
-        filename: Имя файла для сохранения
+        results: Словарь с результатами
+        output_path: Путь для сохранения файла
     """
-    import os
+    output_dir = Path(output_path).parent
+    output_dir.mkdir(exist_ok=True)
     
-    os.makedirs(os.path.dirname(filename) if os.path.dirname(filename) else ".", exist_ok=True)
+    with open(output_path, 'w', encoding='utf-8') as f:
+        json.dump(results, f, ensure_ascii=False, indent=2)
     
-    try:
-        with open(filename, 'w', encoding='utf-8') as f:
-            json.dump(results, f, ensure_ascii=False, indent=2)
-        logger.info(f"Результаты сохранены в файл: {filename}")
-    except Exception as e:
-        logger.error(f"Ошибка при сохранении файла: {e}")
+    logger.info(f"Результаты сохранены в {output_path}")
 
 
 if __name__ == "__main__":
     """
-    Тестовый запуск - обрабатывает URL из xmlriver_batch_results.json
+    Тестовый запуск извлечения метатегов
     """
-    # Загружаем данные
-    input_file = "jsontests/xmlriver_batch_results.json"
-    logger.info(f"Загрузка данных из {input_file}...")
+    # Определяем пути относительно корня проекта
+    project_root = Path(__file__).parent.parent
+    input_file = project_root / "jsontests" / "step7_html_reparsed.json"
+    output_file = project_root / "jsontests" / "step9_meta_extracted.json"
     
-    try:
-        with open(input_file, 'r', encoding='utf-8') as f:
-            batch_data = json.load(f)
-        
-        logger.info("Данные загружены")
-        
-        # Обрабатываем
-        results = asyncio.run(process_batch_urls(
-            batch_data=batch_data,
-            max_concurrent=100,      # До 5 URL одновременно
-            domain_delay=2,      # 2 секунды между запросами к одному домену
-        ))
-        
-        # Сохраняем результат
-        output_file = "jsontests/xmlriver_batch_results_with_meta.json"
-        save_results_to_json(results, output_file)
-        
-        # Статистика
-        logger.info("="*60)
-        logger.info("Готово! Результаты сохранены в:")
-        logger.info(f"  {output_file}")
-        logger.info("="*60)
-        
-    except FileNotFoundError:
-        logger.error(f"Файл не найден: {input_file}")
-    except Exception as e:
-        logger.error(f"Ошибка: {e}")
+    logger.info(f"Загрузка данных из {input_file}")
+    
+    # Загружаем данные
+    with open(input_file, "r", encoding="utf-8") as f:
+        data = json.load(f)
+    
+    # Извлекаем метатеги
+    results = extract_meta_from_filtered_urls(data)
+    
+    # Сохраняем результаты
+    save_results(results, str(output_file))

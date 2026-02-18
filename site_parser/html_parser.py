@@ -20,8 +20,21 @@ except ImportError:
     import logging
     logger = logging.getLogger(__name__)
 
+try:
+    from logger_config import get_html_parser_logger
+    logger = get_html_parser_logger()
+except ImportError:
+    import logging
+    logger = logging.getLogger(__name__)
+
 # Подавляем предупреждения SSL
 warnings.filterwarnings('ignore', message='Unverified HTTPS request')
+
+# Импортируем функцию очистки HTML из html_cleaner
+try:
+    from .html_cleaner import compress_html_for_classification
+except ImportError:
+    from html_cleaner import compress_html_for_classification
 
 
 def save_to_json(data, filename=None, output_dir="jsontests"):
@@ -53,7 +66,7 @@ def save_to_json(data, filename=None, output_dir="jsontests"):
     return filepath
 
 
-async def parse_for_ml(url, client=None):
+async def parse_for_ml(url, client=None, use_proxy=False, proxy_manager=None, min_html_length=100):
     """
     Асинхронный парсинг для ML-классификации типа страницы
     
@@ -62,6 +75,9 @@ async def parse_for_ml(url, client=None):
     Args:
         url: URL страницы для парсинга
         client: httpx.AsyncClient (опционально, для переиспользования)
+        use_proxy: использовать ли прокси
+        proxy_manager: экземпляр ProxyManager (опционально)
+        min_html_length: минимальная длина HTML (символов) для валидного результата
         
     Returns:
         Словарь с данными для ML-модели или None при ошибке
@@ -72,29 +88,57 @@ async def parse_for_ml(url, client=None):
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
         }
         
-        async with httpx.AsyncClient(
-            timeout=30.0, 
-            follow_redirects=True,
-            verify=False,
-            headers=headers
-        ) as temp_client:
-            return await _parse_with_client(url, temp_client)
+        # Формируем настройки клиента
+        client_kwargs = {
+            'timeout': 30.0,
+            'follow_redirects': True,
+            'verify': False,
+            'headers': headers
+        }
+        
+        # Добавляем прокси если нужно
+        if use_proxy and proxy_manager:
+            proxy = proxy_manager.get_random_proxy()
+            if proxy:
+                proxy_url = proxy_manager.get_httpx_proxy_url(proxy)
+                client_kwargs['proxy'] = proxy_url
+                logger.info(f"Используется прокси: {proxy['ip']}:{proxy['port']}")
+        
+        async with httpx.AsyncClient(**client_kwargs) as temp_client:
+            return await _parse_with_client(url, temp_client, min_html_length)
     else:
-        return await _parse_with_client(url, client)
+        return await _parse_with_client(url, client, min_html_length)
 
 
-async def _parse_with_client(url, client):
-    """Внутренняя функция парсинга с переданным клиентом"""
+async def _parse_with_client(url, client, min_html_length=100):
+    """
+    Внутренняя функция парсинга с переданным клиентом
+    
+    Args:
+        url: URL для парсинга
+        client: httpx.AsyncClient
+        min_html_length: минимальная длина HTML для валидного результата
+    
+    Returns:
+        Словарь с результатом или словарь с ошибкой
+    """
     try:
         response = await client.get(url)
         response.raise_for_status()
         html = response.text
     except Exception as e:
         logger.error(f"Ошибка при запросе к {url}: {type(e).__name__}: {e}")
-        return None
+        return {
+            'url': url,
+            'error': f'{type(e).__name__}: {e}'
+        }
     
     if not html:
-        return None
+        logger.error(f"Пустой HTML для {url}")
+        return {
+            'url': url,
+            'error': 'Empty HTML response'
+        }
     
     soup = BeautifulSoup(html, 'lxml')
     
@@ -127,22 +171,62 @@ async def _parse_with_client(url, client):
     # Получаем полный HTML с head и body
     html_structure = str(soup)
     
+    # Применяем агрессивную очистку от мусора (табуляции, переносы, комментарии)
+    html_structure = compress_html_for_classification(html_structure)
+    
+    # Проверяем минимальную длину HTML
+    if len(html_structure) < min_html_length:
+        logger.error(f"HTML слишком короткий для {url}: {len(html_structure)} < {min_html_length} символов")
+        return {
+            'url': url,
+            'error': f'HTML too short: {len(html_structure)} < {min_html_length} characters'
+        }
+    
     # Возвращаем результат
     return {
         'url': url,
-        'html_structure': html_structure,  # HTML структура с метатегами
+        'html_structure': html_structure,  # Очищенная HTML структура
     }
 
 
 if __name__ == "__main__":
-    test_url = "https://teploobmennic.ru/catalog/plastinchatye_teploobmenniki/"
+    import sys
+    from pathlib import Path
+    
+    # URL можно передать как аргумент
+    test_url = sys.argv[1] if len(sys.argv) > 1 else "https://sn22.ru/catalog/payanye-teploobmenniki/_ridan/"
     
     logger.info("Парсинг HTML структуры страницы...")
     logger.info(f"URL: {test_url}")
     
-    result = asyncio.run(parse_for_ml(test_url))
+    # Проверяем наличие proxy.txt и используем прокси если есть
+    proxy_file = Path(__file__).parent / "proxy.txt"
+    use_proxy = False
+    proxy_manager = None
     
-    if result:
+    if proxy_file.exists():
+        try:
+            from .proxy_manager import ProxyManager
+        except ImportError:
+            from proxy_manager import ProxyManager
+        
+        proxy_manager = ProxyManager()
+        if proxy_manager.proxies:
+            use_proxy = True
+            logger.info(f"Найден файл proxy.txt - используем прокси ({len(proxy_manager.proxies)} доступно)")
+        else:
+            logger.info("Файл proxy.txt найден, но прокси не загружены")
+    else:
+        logger.info("Файл proxy.txt не найден - работаем без прокси")
+    
+    result = asyncio.run(parse_for_ml(
+        test_url, 
+        use_proxy=use_proxy, 
+        proxy_manager=proxy_manager,
+        min_html_length=1000  # Минимальная длина HTML в символах
+    ))
+    
+    if result and 'error' not in result:
         logger.info("Успешно распарсено")
         logger.info(f"HTML структура: {len(result['html_structure'])} символов")
         logger.info(f"Первые 500 символов:")
@@ -150,5 +234,7 @@ if __name__ == "__main__":
         
         # Сохраняем результат в JSON
         save_to_json(result)
+    elif result and 'error' in result:
+        logger.error(f"Ошибка при парсинге: {result['error']}")
     else:
-        logger.error("Ошибка при парсинге")
+        logger.error("Неизвестная ошибка при парсинге")

@@ -144,6 +144,7 @@ def get_all_data_urls(worksheet, meta_status: Dict[str, bool]) -> Dict[str, Dict
         url_idx = headers.index('URL') if 'URL' in headers else headers.index('url')
         queries_idx = headers.index('Querries') if 'Querries' in headers else None
         demand_idx = headers.index('Demand') if 'Demand' in headers else None
+        cost_idx = headers.index('Cost') if 'Cost' in headers else None
         company_idx = headers.index('Company name') if 'Company name' in headers else None
         region_idx = headers.index('Region') if 'Region' in headers else None
         var_h1_idx = headers.index('Variables h1') if 'Variables h1' in headers else None
@@ -172,7 +173,8 @@ def get_all_data_urls(worksheet, meta_status: Dict[str, bool]) -> Dict[str, Dict
                 "region": set(),
                 "variables_h1": [],
                 "variables_title": [],
-                "variables_description": []
+                "variables_description": [],
+                "total_cost": 0.0  # Суммарная стоимость всех запросов для URL
             }
         
         # Получаем запросы (могут быть разделены новой строкой)
@@ -182,6 +184,10 @@ def get_all_data_urls(worksheet, meta_status: Dict[str, bool]) -> Dict[str, Dict
         # Получаем частотности (могут быть разделены новой строкой, соответствуют запросам)
         demand = row[demand_idx].strip() if demand_idx and demand_idx < len(row) else ""
         demand_list = [d.strip() for d in demand.split('\n') if d.strip()] if demand else []
+        
+        # Получаем стоимости (могут быть разделены новой строкой, соответствуют запросам)
+        cost = row[cost_idx].strip() if cost_idx and cost_idx < len(row) else ""
+        cost_list = [c.strip() for c in cost.split('\n') if c.strip()] if cost else []
         
         # Добавляем уникальные запросы с частотностью
         for i, q in enumerate(queries_list):
@@ -194,6 +200,15 @@ def get_all_data_urls(worksheet, meta_status: Dict[str, bool]) -> Dict[str, Dict
                     except ValueError:
                         logger.warning(f"Не удалось преобразовать частотность '{demand_list[i]}' в число для запроса '{q}'")
                         frequency = None
+                
+                # Получаем соответствующую стоимость (если есть)
+                query_cost = 0.0
+                if i < len(cost_list):
+                    try:
+                        query_cost = float(cost_list[i])
+                    except ValueError:
+                        logger.warning(f"Не удалось преобразовать стоимость '{cost_list[i]}' в число для запроса '{q}'")
+                        query_cost = 0.0
                 
                 # Проверяем, есть ли уже такой запрос
                 query_exists = False
@@ -210,6 +225,8 @@ def get_all_data_urls(worksheet, meta_status: Dict[str, bool]) -> Dict[str, Dict
                         "query": q,
                         "frequency": frequency
                     })
+                    # Накапливаем стоимость для URL
+                    all_data[url]["total_cost"] += query_cost
         
         # Получаем название компании
         company_name = row[company_idx].strip() if company_idx and company_idx < len(row) else ""
@@ -268,6 +285,22 @@ def get_all_data_urls(worksheet, meta_status: Dict[str, bool]) -> Dict[str, Dict
                     data["region"] = region_value
             else:
                 data["region"] = None
+            
+            # Добавляем структуру wordstat_cost
+            total_cost = data.pop("total_cost", 0.0)
+            # Рассчитываем количество API запросов из стоимости
+            # Цена за запрос = 0.025 RUB
+            if total_cost > 0:
+                price_per_request = 0.025
+                api_requests = int(round(total_cost / price_per_request))
+            else:
+                api_requests = 0
+            
+            data["wordstat_cost"] = {
+                "api_requests": api_requests,
+                "cost": round(total_cost, 4),
+                "currency": "RUB"
+            }
             
             result[url] = data
     
@@ -348,7 +381,7 @@ def process_all_spreadsheets() -> Dict:
     return all_data
 
 
-def save_to_json(data: Dict, filename: str = "jsontests/sheets_data.json") -> None:
+def save_to_json(data: Dict, filename: str = "jsontests/step4_sheets_data_updated.json") -> None:
     """
     Сохраняет данные в JSON файл
     
@@ -369,7 +402,6 @@ if __name__ == "__main__":
     Тест чтения данных из Google Sheets
     """
     logger.info("Начало обработки Google Sheets...")
-    logger.info("="*80)
     
     try:
         # Обрабатываем все таблицы
@@ -379,9 +411,7 @@ if __name__ == "__main__":
         save_to_json(data)
         
         # Выводим краткую статистику
-        logger.info("="*80)
         logger.info("СТАТИСТИКА:")
-        logger.info("="*80)
         
         total_urls = 0
         for spreadsheet_id, sheet_data in data.items():
@@ -394,9 +424,7 @@ if __name__ == "__main__":
         
         # Выводим пример данных
         if data:
-            logger.info("="*80)
             logger.info("ПРИМЕР ДАННЫХ:")
-            logger.info("="*80)
             
             first_sheet = list(data.values())[0]
             if first_sheet.get('urls'):

@@ -63,6 +63,40 @@ def extract_meta(html_structure: str) -> dict:
     }
 
 
+def process_html_for_classification(html_structure: str) -> dict:
+    """
+    УСТАРЕВШАЯ: Извлекает метатеги из HTML структуры
+    
+    ВАЖНО: HTML должен быть УЖЕ СЖАТ после parse_for_ml().
+    Для новых проектов используйте extract_meta() напрямую.
+    
+    Эта функция оставлена для обратной совместимости.
+    
+    Args:
+        html_structure: Сжатая HTML строка
+        
+    Returns:
+        Словарь только с метатегами: {
+            'meta': {'title': str, 'description': str, 'h1': str}
+        }
+    """
+    if not html_structure:
+        return {
+            'meta': {
+                'title': None,
+                'description': None,
+                'h1': None
+            }
+        }
+    
+    # Извлекаем метатеги из уже сжатого HTML
+    meta_tags = extract_meta(html_structure)
+    
+    return {
+        'meta': meta_tags
+    }
+
+
 def extract_meta_from_dict(data: dict) -> dict:
     """
     Извлекает метатеги из словаря с ключом 'html_structure'
@@ -118,20 +152,37 @@ if __name__ == "__main__":
         logger.info(f"Файл загружен")
         logger.info(f"URL: {data.get('url', 'N/A')}")
         
-        # Извлекаем метатеги
-        logger.info("Извлечение метатегов...")
-        result = extract_meta_from_dict(data)
+        # Получаем HTML структуру (уже сжатую после parse_for_ml)
+        html_structure = data.get('html_structure', '')
+        
+        if not html_structure:
+            logger.error("HTML структура отсутствует в файле")
+            exit(1)
+        
+        # Извлекаем метатеги из уже сжатого HTML
+        logger.info("Извлечение метатегов из сжатого HTML...")
+        meta_tags = extract_meta(html_structure)
         
         # Выводим результат
-        logger.info("Результат:")
-        logger.info(f"URL: {result['url']}")
-        logger.info(f"Title: {result['title']}")
-        logger.info(f"Description: {result['description']}")
-        logger.info(f"H1: {result['h1']}")
+        logger.info("Извлечённые метатеги:")
+        logger.info(f"Title: {meta_tags['title']}")
+        logger.info(f"Description: {meta_tags['description']}")
+        logger.info(f"H1: {meta_tags['h1']}")
+        
+        logger.info(f"Размер HTML структуры: {len(html_structure):,} символов")
+        logger.info("(HTML уже сжат после parse_for_ml)")
+        
+        # Формируем результат для сохранения
+        result = {
+            'url': data.get('url', ''),
+            'meta': meta_tags
+        }
         
         # Сохраняем в JSON
         output_file = "jsontests/meta_result.json"
         save_to_json(result, output_file)
+        
+        logger.info(f"✅ Метатеги сохранены в {output_file}")
         
     except FileNotFoundError:
         logger.error(f"Файл не найден: {input_file}")

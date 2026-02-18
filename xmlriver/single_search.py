@@ -41,7 +41,7 @@ async def search_yandex(
     domain: str = "ru",
     lang: str = "ru",
     max_retries: int = 3,
-) -> Optional[str]:
+) -> dict:
     """
     Выполняет поиск в Яндексе через XMLRiver API.
     Возвращает сырой XML ответ.
@@ -57,7 +57,11 @@ async def search_yandex(
         max_retries: Максимальное количество повторных попыток
     
     Returns:
-        XML строка с результатами или None
+        Словарь с ключами:
+        - success: bool, успешен ли запрос
+        - data: str, XML ответ от API или None при ошибке
+        - error: str, текст ошибки или None при успехе
+        - api_requests: int, количество фактических запросов к API
     """
     credentials = get_api_credentials()
     
@@ -77,6 +81,8 @@ async def search_yandex(
     logger.info(f"[REQUEST] XMLRiver: query='{query}', lr={region}, device={device}")
     logger.debug(f"[DEBUG] Full params: {params}")
     
+    api_requests = 0  # Счетчик фактических запросов к API
+    
     for attempt in range(max_retries):
         try:
             # XMLRiver требует таймаут минимум 60 секунд (максимальное время ответа)
@@ -90,6 +96,7 @@ async def search_yandex(
             
             # Обработка 429 (Too Many Requests)
             if response.status_code == 429:
+                # При rate limit деньги не снимаются - НЕ увеличиваем api_requests
                 wait_time = 60 * (attempt + 1)
                 logger.warning(f"[WARN] Rate limit (429). Попытка {attempt + 1}/{max_retries}. Ожидание {wait_time} сек...")
                 if attempt < max_retries - 1:
@@ -97,23 +104,51 @@ async def search_yandex(
                     continue
                 else:
                     logger.error(f"[ERROR] Превышено максимальное количество попыток при rate limit")
-                    return None
+                    return {
+                        "success": False,
+                        "data": None,
+                        "error": "Rate limit exceeded",
+                        "api_requests": api_requests
+                    }
             
             response.raise_for_status()
-            return response.text
+            # Успешный запрос - увеличиваем счетчик (деньги списались)
+            api_requests += 1
+            return {
+                "success": True,
+                "data": response.text,
+                "error": None,
+                "api_requests": api_requests
+            }
         
         except httpx.TimeoutException as e:
+            # При timeout деньги не снимаются - НЕ увеличиваем api_requests
             logger.error(f"[ERROR] search_yandex: таймаут запроса (попытка {attempt + 1}/{max_retries}) - {e}")
             if attempt < max_retries - 1:
                 logger.info(f"[RETRY] Повторная попытка через 10 секунд...")
                 await asyncio.sleep(10)
                 continue
-            return None
+            return {
+                "success": False,
+                "data": None,
+                "error": "Request timeout",
+                "api_requests": api_requests
+            }
         
         except httpx.HTTPStatusError as e:
-            logger.error(f"[ERROR] search_yandex: HTTP ошибка {e.response.status_code} - {e}")
+            # При HTTP ошибке деньги не снимаются - НЕ увеличиваем api_requests
+            logger.error(f"[ERROR] search_yandex: HTTP ошибка {e.response.status_code} (попытка {attempt + 1}/{max_retries}) - {e}")
             logger.error(f"[ERROR] Response content: {e.response.text[:200]}")
-            return None
+            if attempt < max_retries - 1:
+                logger.info(f"[RETRY] Повторная попытка через 10 секунд...")
+                await asyncio.sleep(10)
+                continue
+            return {
+                "success": False,
+                "data": None,
+                "error": f"HTTP {e.response.status_code}",
+                "api_requests": api_requests
+            }
         
         except httpx.RequestError as e:
             logger.error(f"[ERROR] search_yandex: ошибка HTTP запроса (попытка {attempt + 1}/{max_retries})")
@@ -123,13 +158,32 @@ async def search_yandex(
                 logger.info(f"[RETRY] Повторная попытка через 10 секунд...")
                 await asyncio.sleep(10)
                 continue
-            return None
+            return {
+                "success": False,
+                "data": None,
+                "error": f"Request error: {str(e)}",
+                "api_requests": api_requests
+            }
         
         except Exception as e:
-            logger.error(f"[ERROR] search_yandex: неожиданная ошибка - {type(e).__name__}: {e}")
-            return None
+            logger.error(f"[ERROR] search_yandex: неожиданная ошибка (попытка {attempt + 1}/{max_retries}) - {type(e).__name__}: {e}")
+            if attempt < max_retries - 1:
+                logger.info(f"[RETRY] Повторная попытка через 10 секунд...")
+                await asyncio.sleep(10)
+                continue
+            return {
+                "success": False,
+                "data": None,
+                "error": f"Unexpected error: {str(e)}",
+                "api_requests": api_requests
+            }
     
-    return None
+    return {
+        "success": False,
+        "data": None,
+        "error": "All retry attempts failed",
+        "api_requests": api_requests
+    }
 
 
 if __name__ == "__main__":
@@ -139,12 +193,12 @@ if __name__ == "__main__":
     import sys
     
     # Тестовый запрос
-    test_query = "теплообменник купить" if len(sys.argv) < 2 else sys.argv[1]
+    test_query = "теплообменник для нагрева воды" if len(sys.argv) < 2 else sys.argv[1]
     
     logger.info(f"[TEST] Запуск теста для запроса: '{test_query}'")
     
     async def test():
-        xml_result = await search_yandex(
+        result = await search_yandex(
             query=test_query,
             region=213,
             groupby=10,
@@ -153,9 +207,12 @@ if __name__ == "__main__":
             lang="ru",
         )
         
-        if xml_result:
+        logger.info(f"[TEST] API запросов: {result['api_requests']}")
+        
+        if result['success'] and result['data']:
+            xml_result = result['data']
             logger.info(f"[TEST] Получен XML ({len(xml_result)} символов)")
-            logger.info(f"[TEST] Первые 500 символов:\n{xml_result[:500]}")
+            logger.info(f"[TEST] Первые 500 символов: {xml_result[:500]}")
             
             # Сохраняем в файл для анализа
             output_file = Path(__file__).parent.parent / "jsontests" / "single_search_result.xml"
@@ -164,6 +221,6 @@ if __name__ == "__main__":
                 f.write(xml_result)
             logger.info(f"[TEST] XML сохранен в: {output_file}")
         else:
-            logger.error("[TEST] Не удалось получить результат")
+            logger.error(f"[TEST] Не удалось получить результат: {result.get('error', 'Unknown error')}")
     
     asyncio.run(test())

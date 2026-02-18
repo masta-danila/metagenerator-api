@@ -2,7 +2,11 @@ import json
 import os
 from dotenv import load_dotenv
 from openai import OpenAI
-from llm_response_cleaner import clean_llm_content
+
+try:
+    from .llm_response_cleaner import clean_llm_content
+except ImportError:
+    from llm_response_cleaner import clean_llm_content
 
 
 def request_grok(model: str, messages: list) -> dict:

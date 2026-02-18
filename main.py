@@ -126,7 +126,7 @@ async def run_full_pipeline() -> bool:
         max_retries=2,  # Количество повторных попыток при ошибках
         min_html_length=1000  # Минимальная длина HTML (меньше = ошибка)
     )
-    # save_step_results(data, "step6_html_parsed.json")
+    save_step_results(data, "step6_html_parsed.json")
 
     # Шаг 7: Повторный парсинг неудачных URL через браузер
     ENABLE_BROWSER_REPARSE = True  # Флаг: измените на False чтобы пропустить этот шаг

@@ -91,27 +91,19 @@ class BrowserFetcher:
         self.driver = None
         self.current_proxy = None
         
-    def _create_options(self) -> Options:
-        """Создание опций для Chrome"""
-        options = Options()
+    def _create_options(self):
+        """Создание опций для Chrome - МИНИМУМ настроек для undetected-chromedriver"""
+        # ВАЖНО: используем uc.ChromeOptions() вместо обычного Options()
+        options = uc.ChromeOptions()
         
-        # Стратегия загрузки страницы: eager - ждем только DOM, не ждем все ресурсы
-        # МИНИМАЛЬНЫЕ настройки для undetected-chromedriver
-        # Undetected делает всю магию сам, не мешаем ему!
-        
-        # Только базовые системные настройки
+        # ТОЛЬКО базовые системные настройки - как в test_antidetect.py
         options.add_argument("--no-sandbox")
         options.add_argument("--disable-dev-shm-usage")
+        options.add_argument("--window-size=1920,1080")
         
-        # Отключаем WebRTC только если будет прокси (утечка IP)
-        if self.use_proxy:
-            options.add_argument("--disable-webrtc")
-            options.add_argument("--disable-webrtc-hw-encoding")
-            options.add_argument("--disable-webrtc-hw-decoding")
-        
-        # Настройка эмуляции
+        # Мобильная эмуляция (если нужна)
         if self.device_type == "mobile":
-            device_width, device_height = 390, 844  # iPhone 13
+            device_width, device_height = 390, 844
             mobile_emulation = {
                 "deviceMetrics": {
                     "width": device_width,
@@ -122,9 +114,6 @@ class BrowserFetcher:
             }
             options.add_experimental_option("mobileEmulation", mobile_emulation)
             options.add_argument(f"--window-size=500,994")
-        else:
-            # Desktop: размер окна (user-agent undetected-chromedriver установит сам!)
-            options.add_argument("--window-size=1920,1080")
         
         return options
     
@@ -184,28 +173,23 @@ class BrowserFetcher:
                     options.add_argument(f"--proxy-server={proxy_str}")
                     logger.info(f"Используем прокси через Chrome args: {proxy_str}")
                     
-                    # Создаем драйвер с undetected-chromedriver
+                    # Создаем драйвер - точно как в test_antidetect.py
                     self.driver = uc.Chrome(
                         options=options,
                         version_main=None,
-                        headless=not self.visible,
-                        use_subprocess=True
+                        headless=not self.visible
                     )
             else:
-                # Без прокси - чистый undetected-chromedriver
+                # Без прокси - чистый undetected-chromedriver (точно как в test_antidetect.py)
                 self.driver = uc.Chrome(
                     options=options,
                     version_main=None,
-                    headless=not self.visible,
-                    use_subprocess=True
+                    headless=not self.visible
                 )
             
             # undetected-chromedriver уже делает весь антидетект автоматически
-            # Дополнительные скрипты не нужны
-            
-            # Устанавливаем таймауты (увеличены для работы с прокси)
-            self.driver.set_page_load_timeout(60)  # 60 секунд для полной загрузки
-            self.driver.implicitly_wait(15)  # 15 секунд для поиска элементов
+            # НЕ устанавливаем таймауты - они могут палить бота!
+            # Пусть будут дефолтные настройки undetected-chromedriver
             
             logger.info("Браузер успешно запущен")
             return True
@@ -216,7 +200,7 @@ class BrowserFetcher:
             logger.error(f"Ошибка запуска браузера: {type(e).__name__}: {error_msg}")
             return False
     
-    def fetch_html(self, url: str, wait_time: int = 2, clean_html: bool = False, min_html_length: int = 100) -> Optional[str]:
+    def fetch_html(self, url: str, wait_time: int = 2, clean_html: bool = False, min_html_length: int = 100, emulate_user: bool = True) -> Optional[str]:
         """
         Получить HTML код страницы
         
@@ -225,6 +209,7 @@ class BrowserFetcher:
             wait_time: время ожидания после загрузки (секунды)
             clean_html: применить ли очистку HTML (удалить классы, id, стили и т.д.)
             min_html_length: минимальная длина HTML (символов) для валидного результата
+            emulate_user: эмулировать поведение реального пользователя (сначала главная страница)
         
         Returns:
             HTML код страницы или None при ошибке
@@ -233,55 +218,56 @@ class BrowserFetcher:
             logger.error("Браузер не запущен. Вызовите start() сначала.")
             return None
         
-        html = None
+        # Эмуляция реального пользователя - сначала на главную!
+        if emulate_user:
+            try:
+                from urllib.parse import urlparse
+                parsed = urlparse(url)
+                home_url = f"{parsed.scheme}://{parsed.netloc}/"
+                
+                # Только если это не главная страница
+                if url != home_url and not url.endswith(parsed.netloc):
+                    logger.info(f"Эмуляция пользователя: сначала главная {home_url}")
+                    self.driver.get(home_url)
+                    time.sleep(2)  # Смотрим главную 2 секунды
+            except Exception as e:
+                logger.warning(f"Не удалось зайти на главную: {e}")
+        
+        # Загружаем целевую страницу
         try:
             logger.info(f"Загружаем: {url}")
             self.driver.get(url)
             
-        except Exception as e:
-            # Если таймаут - это нормально, страница может быть загружена частично
-            error_type = type(e).__name__
-            if 'Timeout' in error_type:
-                logger.warning(f"Таймаут загрузки страницы, но попробуем получить HTML")
-            else:
-                error_msg = str(e).split('\n')[0]
-                logger.error(f"Ошибка загрузки: {error_type}: {error_msg}")
-                return None
-        
-        # Пытаемся получить HTML несколько раз (Chrome может крашнуться с прокси)
-        for attempt in range(3):
-            try:
-                # Ждем загрузки JavaScript (только на первой попытке)
-                if attempt == 0:
-                    time.sleep(wait_time)
-                else:
-                    time.sleep(0.5)
-                
-                # Получаем HTML
-                html = self.driver.page_source
-                
-                # Если получили - выходим из цикла
-                if html:
-                    break
+            # Ждем загрузки JavaScript
+            time.sleep(wait_time)
+            
+            # Эмуляция просмотра страницы - скроллим как реальный пользователь
+            if emulate_user:
+                try:
+                    import random
+                    # Скроллим вниз на случайную величину
+                    scroll_amount = random.randint(300, 800)
+                    self.driver.execute_script(f"window.scrollTo(0, {scroll_amount});")
+                    time.sleep(random.uniform(0.5, 1.5))  # Случайная задержка
                     
-            except Exception as e:
-                error_type = type(e).__name__
-                # Если окно закрылось - прерываем попытки
-                if 'NoSuchWindow' in error_type or 'window already closed' in str(e):
-                    logger.error(f"Окно браузера закрылось (попытка {attempt + 1}/3)")
-                    if attempt < 2:
-                        logger.info("Пробуем еще раз...")
-                        continue
-                    return None
-                else:
-                    error_msg = str(e).split('\n')[0]
-                    logger.error(f"Ошибка получения HTML: {error_type}: {error_msg}")
-                    if attempt < 2:
-                        continue
-                    return None
-        
-        if not html:
-            logger.error("Не удалось получить HTML после 3 попыток")
+                    # Иногда скроллим обратно
+                    if random.random() > 0.5:
+                        scroll_back = random.randint(100, scroll_amount)
+                        self.driver.execute_script(f"window.scrollTo(0, {scroll_back});")
+                        time.sleep(random.uniform(0.3, 0.8))
+                except Exception as e:
+                    logger.debug(f"Scroll эмуляция пропущена: {e}")
+            
+            # Получаем HTML - один раз, без попыток
+            html = self.driver.page_source
+            
+            if not html:
+                logger.error("HTML не получен (None)")
+                return None
+                
+        except Exception as e:
+            error_msg = str(e).split('\n')[0]
+            logger.error(f"Ошибка загрузки: {type(e).__name__}: {error_msg}")
             return None
         
         try:

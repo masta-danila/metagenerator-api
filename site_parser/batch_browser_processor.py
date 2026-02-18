@@ -119,7 +119,7 @@ def parse_url_with_browser(
             if not fetcher.start():
                 raise Exception("Не удалось запустить браузер")
             
-            html = fetcher.fetch_html(url, wait_time=wait_time, clean_html=True, min_html_length=min_html_length)
+            html = fetcher.fetch_html(url, wait_time=wait_time, clean_html=False, min_html_length=min_html_length, emulate_user=True)
             
             # Закрываем браузер сразу после получения HTML
             fetcher.close()

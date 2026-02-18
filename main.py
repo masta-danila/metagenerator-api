@@ -105,7 +105,8 @@ async def run_full_pipeline() -> bool:
         domain="ru",  # ru, com, ua...
         lang="ru",  # ru, uk, en...
         max_concurrent=10,  # XMLRiver: до 10 одновременных запросов
-        task_start_delay=0.0  # XMLRiver: прямые запросы, задержка не нужна
+        task_start_delay=0.0,  # XMLRiver: прямые запросы, задержка не нужна
+        max_retries=3  # Количество повторных попыток при ошибках API
     )
     save_step_results(data, "step5_filtered_urls.json")
     

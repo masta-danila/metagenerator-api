@@ -263,6 +263,7 @@ async def process_sheets_data(
     lang: str = "ru",
     max_concurrent: int = 10,
     task_start_delay: float = 0.0,
+    max_retries: int = 3,
 ) -> Dict:
     """
     Обрабатывает все URL из sheets_data асинхронно через XMLRiver API.
@@ -284,6 +285,7 @@ async def process_sheets_data(
         lang: Язык (ru, uk, en...)
         max_concurrent: Максимальное количество одновременных запросов XMLRiver (10 для стандартного аккаунта)
         task_start_delay: Задержка между стартами задач (в секундах)
+        max_retries: Максимальное количество повторных попыток при ошибках API
     
     Returns:
         Обновлённый словарь с добавленными filtered_urls для каждого URL
@@ -342,6 +344,7 @@ async def process_sheets_data(
                 device=device,
                 domain=domain,
                 lang=lang,
+                max_retries=max_retries,
             )
             
             if search_result['success'] and search_result['data']:
@@ -526,6 +529,7 @@ async def get_top_results(
                 device=device,
                 domain=domain,
                 lang=lang,
+                max_retries=max_retries,
             )
             
             if search_result['success'] and search_result['data']:
@@ -630,6 +634,7 @@ if __name__ == "__main__":
             lang="ru",
             max_concurrent=10,  # До 10 запросов одновременно (стандартный аккаунт)
             task_start_delay=0.0,  # Нет задержки, т.к. нет rate limiter
+            max_retries=3,  # Количество повторных попыток при ошибках API
         ))
         
         # Сохраняем результаты

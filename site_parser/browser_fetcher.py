@@ -10,10 +10,15 @@ import time
 import warnings
 import logging
 import subprocess
+import ssl
 from typing import Optional
 from pathlib import Path
 from selenium import webdriver
 from selenium.webdriver.chrome.options import Options
+import undetected_chromedriver as uc
+
+# Временно отключаем проверку SSL для undetected-chromedriver (для загрузки драйвера)
+ssl._create_default_https_context = ssl._create_unverified_context
 
 # Добавляем корень проекта в путь для импорта
 sys.path.insert(0, str(Path(__file__).parent.parent))
@@ -91,49 +96,20 @@ class BrowserFetcher:
         options = Options()
         
         # Стратегия загрузки страницы: eager - ждем только DOM, не ждем все ресурсы
-        options.page_load_strategy = 'eager'
+        # МИНИМАЛЬНЫЕ настройки для undetected-chromedriver
+        # Undetected делает всю магию сам, не мешаем ему!
         
-        # Базовые настройки
-        if not self.visible:
-            options.add_argument("--headless=new")
-        
+        # Только базовые системные настройки
         options.add_argument("--no-sandbox")
         options.add_argument("--disable-dev-shm-usage")
         
-        # КРИТИЧЕСКИ ВАЖНО: Анти-детект настройки из yamparser
-        options.add_argument("--disable-blink-features=AutomationControlled")  # Убирает navigator.webdriver
-        options.add_argument("--disable-web-security")
-        options.add_argument("--disable-extensions")
-        options.add_argument("--disable-plugins")
-        options.add_argument("--disable-features=VizDisplayCompositor")
+        # Отключаем WebRTC только если будет прокси (утечка IP)
+        if self.use_proxy:
+            options.add_argument("--disable-webrtc")
+            options.add_argument("--disable-webrtc-hw-encoding")
+            options.add_argument("--disable-webrtc-hw-decoding")
         
-        # Устанавливаем позицию окна для предсказуемого поведения
-        options.add_argument("--window-position=100,100")
-        
-        # Подавляем логи и предупреждения Chrome
-        options.add_argument("--log-level=3")
-        options.add_argument("--silent")
-        options.add_argument("--disable-logging")
-        options.add_experimental_option("excludeSwitches", ["enable-automation", "enable-logging"])
-        options.add_experimental_option('useAutomationExtension', False)
-        
-        # Отключаем уведомления и изображения (для скорости)
-        options.add_experimental_option("prefs", {
-            "profile.default_content_setting_values.notifications": 2,
-            "profile.managed_default_content_settings.images": 2
-        })
-        
-        # Отключаем WebRTC для предотвращения утечки IP
-        options.add_argument("--disable-webrtc")
-        options.add_argument("--disable-webrtc-hw-encoding")
-        options.add_argument("--disable-webrtc-hw-decoding")
-        
-        # Отключаем предупреждения SSL
-        options.add_argument("--ignore-certificate-errors")
-        options.add_argument("--ignore-ssl-errors")
-        options.add_argument("--allow-running-insecure-content")
-        
-        # Настройка мобильной эмуляции
+        # Настройка эмуляции
         if self.device_type == "mobile":
             device_width, device_height = 390, 844  # iPhone 13
             mobile_emulation = {
@@ -147,8 +123,8 @@ class BrowserFetcher:
             options.add_experimental_option("mobileEmulation", mobile_emulation)
             options.add_argument(f"--window-size=500,994")
         else:
-            # Desktop user agent
-            options.add_argument("user-agent=Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
+            # Desktop: размер окна (user-agent undetected-chromedriver установит сам!)
+            options.add_argument("--window-size=1920,1080")
         
         return options
     
@@ -162,47 +138,70 @@ class BrowserFetcher:
         try:
             logger.info(f"Запуск браузера ({self.device_type}, {'visible' if self.visible else 'headless'})...")
             
-            # Если нужен прокси
+            # Создаем базовые настройки
+            options = self._create_options()
+            
+            # Если нужен прокси - добавляем через Chrome аргументы
             if self.use_proxy and self.proxy_manager and PROXY_MANAGER_AVAILABLE:
-                if not SELENIUMWIRE_AVAILABLE:
-                    logger.error("selenium-wire не установлен. Установите: pip install selenium-wire")
-                    return False
-                
                 # Получаем прокси
                 self.current_proxy = self.proxy_manager.get_random_proxy()
                 if not self.current_proxy:
                     logger.error("Нет доступных прокси")
                     return False
                 
-                # Настраиваем прокси
-                chrome_options, proxy_options = self.proxy_manager.configure_seleniumwire_proxy(self.current_proxy)
-                
-                # Добавляем наши настройки
-                options = self._create_options()
-                for arg in options.arguments:
-                    if not any(arg.startswith(existing_arg.split('=')[0]) for existing_arg in chrome_options.arguments):
-                        chrome_options.add_argument(arg)
-                
-                for option_name, option_value in options.experimental_options.items():
-                    chrome_options.add_experimental_option(option_name, option_value)
-                
-                # Создаем драйвер с прокси
-                # Selenium автоматически найдет правильный ChromeDriver
-                self.driver = wiredriver.Chrome(
-                    options=chrome_options,
-                    seleniumwire_options=proxy_options
-                )
-                
+                # Формируем прокси строку для Chrome
+                proxy_str = f"{self.current_proxy['ip']}:{self.current_proxy['port']}"
+                if self.current_proxy.get('username') and self.current_proxy.get('password'):
+                    # С авторизацией - selenium-wire все еще нужен
+                    logger.warning("Прокси с авторизацией требует selenium-wire, антидетект может быть слабее")
+                    
+                    if not SELENIUMWIRE_AVAILABLE:
+                        logger.error("selenium-wire не установлен для прокси с авторизацией")
+                        return False
+                    
+                    chrome_options, proxy_options = self.proxy_manager.configure_seleniumwire_proxy(self.current_proxy)
+                    
+                    # Добавляем наши настройки
+                    for arg in options.arguments:
+                        if not any(arg.startswith(existing_arg.split('=')[0]) for existing_arg in chrome_options.arguments):
+                            chrome_options.add_argument(arg)
+                    
+                    for option_name, option_value in options.experimental_options.items():
+                        chrome_options.add_experimental_option(option_name, option_value)
+                    
+                    # SSL игноры для прокси
+                    chrome_options.add_argument("--ignore-certificate-errors")
+                    chrome_options.add_argument("--ignore-ssl-errors")
+                    chrome_options.add_argument("--allow-running-insecure-content")
+                    
+                    # Используем обычный Chrome с selenium-wire
+                    self.driver = wiredriver.Chrome(
+                        options=chrome_options,
+                        seleniumwire_options=proxy_options
+                    )
+                else:
+                    # Без авторизации - используем undetected-chromedriver с простым прокси
+                    options.add_argument(f"--proxy-server={proxy_str}")
+                    logger.info(f"Используем прокси через Chrome args: {proxy_str}")
+                    
+                    # Создаем драйвер с undetected-chromedriver
+                    self.driver = uc.Chrome(
+                        options=options,
+                        version_main=None,
+                        headless=not self.visible,
+                        use_subprocess=True
+                    )
             else:
-                # Создаем драйвер без прокси
-                # Selenium автоматически найдет правильный ChromeDriver
-                options = self._create_options()
-                self.driver = webdriver.Chrome(options=options)
+                # Без прокси - чистый undetected-chromedriver
+                self.driver = uc.Chrome(
+                    options=options,
+                    version_main=None,
+                    headless=not self.visible,
+                    use_subprocess=True
+                )
             
-            # Убираем признаки автоматизации
-            self.driver.execute_script(
-                "Object.defineProperty(navigator, 'webdriver', {get: () => undefined})"
-            )
+            # undetected-chromedriver уже делает весь антидетект автоматически
+            # Дополнительные скрипты не нужны
             
             # Устанавливаем таймауты (увеличены для работы с прокси)
             self.driver.set_page_load_timeout(60)  # 60 секунд для полной загрузки

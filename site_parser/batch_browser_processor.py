@@ -462,10 +462,10 @@ if __name__ == "__main__":
         # Запускаем повторный парсинг через браузер
         results = reparse_failed_urls_with_browser(
             data=data,
-            max_concurrent=5,      # ТЕСТ: только 1 браузер для проверки
-            max_retries=1,         # 2 попытки на каждый URL
+            max_concurrent=1,      # ТЕСТ: только 1 браузер для проверки
+            max_retries=2,         # 2 попытки на каждый URL
             wait_time=3,           # 3 сек ожидание загрузки JavaScript
-            use_proxy=False,       # ТЕСТ: отключаем прокси для проверки браузера
+            use_proxy=use_proxy,   # Используем прокси (если есть proxy.txt)
             proxy_manager=proxy_manager,
             min_html_length=2000,  # Минимальная длина HTML в символах
             device_type="desktop", # Тип устройства для эмуляции

@@ -7,9 +7,10 @@
 3. Обновляет данные, заменяя ошибки на успешные результаты
 """
 import json
-import asyncio
 import sys
 import copy
+import time
+import threading
 from typing import Dict, List, Set, Optional
 from pathlib import Path
 from collections import defaultdict
@@ -74,125 +75,94 @@ def extract_failed_urls(data: Dict) -> Dict:
     return failed_urls
 
 
-def _fetch_with_browser_sync(
+def parse_url_with_browser(
     url: str,
-    use_proxy: bool = False,
-    proxy_manager = None,
-    wait_time: int = 3,
-    min_html_length: int = 100,
-    device_type: str = "desktop"
-) -> Optional[str]:
-    """
-    Синхронная функция для запуска браузера и получения HTML
-    (вызывается через asyncio.to_thread)
-    
-    Args:
-        url: URL для парсинга
-        use_proxy: использовать ли прокси
-        proxy_manager: экземпляр ProxyManager
-        wait_time: время ожидания загрузки JavaScript (секунды)
-        min_html_length: минимальная длина HTML для валидного результата
-        device_type: "mobile" или "desktop"
-    
-    Returns:
-        Очищенный HTML код или None при ошибке
-    """
-    try:
-        from site_parser.browser_fetcher import BrowserFetcher
-        
-        with BrowserFetcher(
-            device_type=device_type,
-            visible=False,
-            use_proxy=use_proxy,
-            proxy_manager=proxy_manager
-        ) as fetcher:
-            html = fetcher.fetch_html(url, wait_time=wait_time, clean_html=True, min_html_length=min_html_length)
-            return html
-            
-    except Exception as e:
-        logger.error(f"Browser fetch error for {url}: {e}")
-        return None
-
-
-async def parse_url_with_browser(
-    url: str,
-    semaphore: asyncio.Semaphore,
     use_proxy: bool = False,
     proxy_manager = None,
     max_retries: int = 2,
     wait_time: int = 3,
     min_html_length: int = 100,
-    device_type: str = "desktop"
+    device_type: str = "desktop",
+    visible: bool = False
 ) -> Dict:
     """
-    Асинхронная обертка для парсинга URL через браузер с повторными попытками
+    Синхронная функция для парсинга URL через браузер с повторными попытками
     
     Args:
         url: URL для парсинга
-        semaphore: Семафор для ограничения одновременных браузеров
         use_proxy: использовать ли прокси
         proxy_manager: экземпляр ProxyManager
         max_retries: Максимальное количество попыток
         wait_time: Время ожидания загрузки JavaScript
         min_html_length: Минимальная длина HTML для валидного результата
         device_type: "mobile" или "desktop"
+        visible: показывать ли браузер визуально (для отладки)
     
     Returns:
         Словарь с результатом парсинга
     """
-    async with semaphore:
-        for attempt in range(max_retries):
-            try:
-                logger.info(f"[BROWSER {attempt + 1}/{max_retries}] Парсинг: {url}")
+    from site_parser.browser_fetcher import BrowserFetcher
+    
+    for attempt in range(max_retries):
+        fetcher = None
+        try:
+            logger.info(f"[BROWSER {attempt + 1}/{max_retries}] Парсинг: {url}")
+            
+            # Создаем новый браузер для каждой попытки
+            fetcher = BrowserFetcher(
+                device_type=device_type,
+                visible=visible,
+                use_proxy=use_proxy,
+                proxy_manager=proxy_manager
+            )
+            
+            if not fetcher.start():
+                raise Exception("Не удалось запустить браузер")
+            
+            html = fetcher.fetch_html(url, wait_time=wait_time, clean_html=True, min_html_length=min_html_length)
+            
+            # Закрываем браузер сразу после получения HTML
+            fetcher.close()
+            fetcher = None
+            
+            if not html:
+                raise Exception(f"HTML не получен (None)")
+            
+            if len(html) < min_html_length:
+                raise Exception(f"HTML слишком короткий: {len(html)} < {min_html_length} символов")
+            
+            logger.info(f"[BROWSER OK] {url} ({len(html)} символов)")
+            return {
+                'url': url,
+                'html_structure': html
+            }
                 
-                # Запускаем browser_fetcher в отдельном потоке
-                # (т.к. он синхронный, а мы работаем в async)
-                html = await asyncio.to_thread(
-                    _fetch_with_browser_sync,
-                    url,
-                    use_proxy,
-                    proxy_manager,
-                    wait_time,
-                    min_html_length,
-                    device_type
-                )
-                
-                # Явная проверка результата
-                if not html:
-                    raise Exception(f"HTML не получен (None)")
-                
-                # Явная проверка длины HTML
-                if len(html) < min_html_length:
-                    raise Exception(f"HTML слишком короткий: {len(html)} < {min_html_length} символов")
-                
-                # Все проверки пройдены - возвращаем результат
-                logger.info(f"[BROWSER OK] {url} ({len(html)} символов)")
+        except Exception as e:
+            logger.error(f"[BROWSER ОШИБКА] Попытка {attempt + 1} для {url}: {str(e)}")
+            
+            # Принудительно закрываем браузер в случае ошибки
+            if fetcher:
+                try:
+                    fetcher.close()
+                except:
+                    pass
+            
+            if attempt == max_retries - 1:
                 return {
                     'url': url,
-                    'html_structure': html
+                    'error': f'Browser fetch failed: {str(e)}'
                 }
-                    
-            except Exception as e:
-                logger.error(f"[BROWSER ОШИБКА] Попытка {attempt + 1} для {url}: {str(e)}")
-                
-                if attempt == max_retries - 1:
-                    # Последняя попытка - возвращаем ошибку
-                    return {
-                        'url': url,
-                        'error': f'Browser fetch failed: {str(e)}'
-                    }
-                
-                # Ждем перед следующей попыткой (больше чем для httpx)
-                await asyncio.sleep(5 * (attempt + 1))
-        
-        # На случай непредвиденной ситуации
-        return {
-            'url': url,
-            'error': 'Unknown error - no result returned'
-        }
+            
+            # Увеличиваем задержку с каждой попыткой
+            time.sleep(3 * (attempt + 1))
+    
+    return {
+        'url': url,
+        'error': 'Unknown error - no result returned'
+    }
 
 
-async def reparse_failed_urls_with_browser(
+def reparse_failed_urls_with_browser(
     data: Dict,
     max_concurrent: int = 3,
     max_retries: int = 2,
@@ -200,10 +170,11 @@ async def reparse_failed_urls_with_browser(
     use_proxy: bool = False,
     proxy_manager = None,
     min_html_length: int = 100,
-    device_type: str = "desktop"
+    device_type: str = "desktop",
+    visible: bool = False
 ) -> Dict:
     """
-    Повторно парсит URL с ошибками через браузер (Selenium)
+    Повторно парсит URL с ошибками через браузер (Selenium) используя многопоточность
     
     Args:
         data: Словарь с результатами первого прохода (из batch_html_processor)
@@ -214,6 +185,7 @@ async def reparse_failed_urls_with_browser(
         proxy_manager: экземпляр ProxyManager (опционально)
         min_html_length: Минимальная длина HTML для валидного результата
         device_type: "mobile" или "desktop" - тип устройства для эмуляции
+        visible: показывать ли браузер визуально (для отладки)
     
     Returns:
         Обновленный словарь с исправленными данными
@@ -224,6 +196,7 @@ async def reparse_failed_urls_with_browser(
     logger.info(f"- Ожидание загрузки JS: {wait_time}s")
     logger.info(f"- Минимальная длина HTML: {min_html_length} символов")
     logger.info(f"- Тип устройства: {device_type}")
+    logger.info(f"- Режим браузера: {'Видимый' if visible else 'Headless'}")
     if use_proxy and proxy_manager:
         logger.info(f"- Используются прокси: {len(proxy_manager.proxies)} доступно")
     
@@ -245,13 +218,12 @@ async def reparse_failed_urls_with_browser(
         return data
     
     # Шаг 2: Собираем все уникальные URL
-    all_failed_urls = set(failed_urls['main_urls'].keys()) | set(failed_urls['filtered_urls'].keys())
+    all_failed_urls = list(set(failed_urls['main_urls'].keys()) | set(failed_urls['filtered_urls'].keys()))
     logger.info(f"[ШАГ 2] Подготовка к повторному парсингу {len(all_failed_urls)} уникальных URL...")
     
     # Показываем примеры URL с ошибками
     logger.info("Примеры URL с ошибками:")
-    for i, url in enumerate(list(all_failed_urls)[:5], 1):
-        # Находим первую ошибку для этого URL
+    for i, url in enumerate(all_failed_urls[:5], 1):
         error = None
         if url in failed_urls['main_urls']:
             error = failed_urls['main_urls'][url][0].get('error', 'Unknown error')
@@ -264,28 +236,58 @@ async def reparse_failed_urls_with_browser(
     if len(all_failed_urls) > 5:
         logger.info(f"  ... и еще {len(all_failed_urls) - 5} URL")
     
-    # Шаг 3: Создаем семафор для ограничения одновременных браузеров
-    semaphore = asyncio.Semaphore(max_concurrent)
+    # Шаг 3: Создаем батчи для параллельной обработки
+    def chunks(lst, n):
+        """Разделить список на батчи по n элементов"""
+        for i in range(0, len(lst), n):
+            yield lst[i:i + n]
     
-    # Шаг 4: Запускаем повторный парсинг через браузер
-    logger.info(f"[ШАГ 3] Запуск повторного парсинга через Selenium...")
+    url_batches = list(chunks(all_failed_urls, max(1, len(all_failed_urls) // max_concurrent)))
+    
+    # Шаг 4: Запускаем повторный парсинг через браузер с многопоточностью
+    logger.info(f"[ШАГ 3] Запуск повторного парсинга через Selenium (потоков: {len(url_batches)})...")
     logger.info(f"ВНИМАНИЕ: Браузер медленнее httpx в ~3-5 раз, наберитесь терпения...")
     
-    tasks = [
-        parse_url_with_browser(
-            url, 
-            semaphore, 
-            use_proxy, 
-            proxy_manager, 
-            max_retries,
-            wait_time,
-            min_html_length,
-            device_type
-        )
-        for url in all_failed_urls
-    ]
+    results = []
+    results_lock = threading.Lock()
     
-    results = await asyncio.gather(*tasks)
+    def process_batch(batch, worker_id):
+        """Обработка батча URL в отдельном потоке"""
+        logger.info(f"Поток {worker_id}: Начало обработки {len(batch)} URL")
+        
+        for url in batch:
+            result = parse_url_with_browser(
+                url=url,
+                use_proxy=use_proxy,
+                proxy_manager=proxy_manager,
+                max_retries=max_retries,
+                wait_time=wait_time,
+                min_html_length=min_html_length,
+                device_type=device_type,
+                visible=visible
+            )
+            
+            with results_lock:
+                results.append(result)
+        
+        logger.info(f"Поток {worker_id}: Завершено")
+    
+    threads = []
+    delay_between_threads = 2  # Задержка между запуском потоков (секунды)
+    
+    for i, batch in enumerate(url_batches, 1):
+        thread = threading.Thread(target=process_batch, args=(batch, i))
+        threads.append(thread)
+        thread.start()
+        
+        # Даем время на инициализацию браузера перед запуском следующего
+        if i < len(url_batches):
+            logger.info(f"Ждем {delay_between_threads}с перед запуском следующего потока...")
+            time.sleep(delay_between_threads)
+    
+    # Ждем завершения всех потоков
+    for thread in threads:
+        thread.join()
     
     # Шаг 5: Создаем маппинг URL -> результат
     parsed_data = {result['url']: result for result in results}
@@ -407,7 +409,23 @@ if __name__ == "__main__":
     """
     Тестовый запуск повторного парсинга через браузер
     """
-    async def test():
+    def test():
+        import subprocess
+        import platform
+        
+        # Убиваем старые процессы Chrome и ChromeDriver
+        try:
+            if platform.system() == "Darwin":  # macOS
+                subprocess.run(["killall", "-9", "Google Chrome"], stderr=subprocess.DEVNULL)
+                subprocess.run(["killall", "-9", "chromedriver"], stderr=subprocess.DEVNULL)
+                logger.info("Убиты старые процессы Chrome и ChromeDriver")
+            elif platform.system() == "Linux":
+                subprocess.run(["pkill", "-9", "-f", "chrome"], stderr=subprocess.DEVNULL)
+                subprocess.run(["pkill", "-9", "-f", "chromedriver"], stderr=subprocess.DEVNULL)
+                logger.info("Убиты старые процессы Chrome и ChromeDriver")
+        except Exception as e:
+            logger.warning(f"Не удалось убить старые процессы: {e}")
+        
         # Определяем пути относительно корня проекта
         project_root = Path(__file__).parent.parent
         input_file = project_root / "jsontests" / "step6_html_parsed.json"
@@ -442,15 +460,16 @@ if __name__ == "__main__":
             logger.info("Файл proxy.txt не найден - работаем без прокси")
         
         # Запускаем повторный парсинг через браузер
-        results = await reparse_failed_urls_with_browser(
+        results = reparse_failed_urls_with_browser(
             data=data,
-            max_concurrent=3,      # Только 3 браузера одновременно (тяжело для системы)
+            max_concurrent=5,      # ТЕСТ: только 1 браузер для проверки
             max_retries=1,         # 2 попытки на каждый URL
             wait_time=3,           # 3 сек ожидание загрузки JavaScript
-            use_proxy=use_proxy,
+            use_proxy=False,       # ТЕСТ: отключаем прокси для проверки браузера
             proxy_manager=proxy_manager,
-            min_html_length=1000,   # Минимальная длина HTML в символах
-            device_type="desktop"   # Тип устройства для эмуляции
+            min_html_length=2000,  # Минимальная длина HTML в символах
+            device_type="desktop", # Тип устройства для эмуляции
+            visible=True           # ОТЛАДКА: показываем браузер визуально
         )
         
         # Сохраняем результаты
@@ -459,4 +478,4 @@ if __name__ == "__main__":
         logger.info(f"ГОТОВО!")
         logger.info(f"Исправленные данные сохранены в: {output_file}")
     
-    asyncio.run(test())
+    test()

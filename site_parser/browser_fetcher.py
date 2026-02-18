@@ -14,8 +14,6 @@ from typing import Optional
 from pathlib import Path
 from selenium import webdriver
 from selenium.webdriver.chrome.options import Options
-from selenium.webdriver.chrome.service import Service
-from webdriver_manager.chrome import ChromeDriverManager
 
 # Добавляем корень проекта в путь для импорта
 sys.path.insert(0, str(Path(__file__).parent.parent))
@@ -101,8 +99,16 @@ class BrowserFetcher:
         
         options.add_argument("--no-sandbox")
         options.add_argument("--disable-dev-shm-usage")
-        options.add_argument("--disable-blink-features=AutomationControlled")
+        
+        # КРИТИЧЕСКИ ВАЖНО: Анти-детект настройки из yamparser
+        options.add_argument("--disable-blink-features=AutomationControlled")  # Убирает navigator.webdriver
         options.add_argument("--disable-web-security")
+        options.add_argument("--disable-extensions")
+        options.add_argument("--disable-plugins")
+        options.add_argument("--disable-features=VizDisplayCompositor")
+        
+        # Устанавливаем позицию окна для предсказуемого поведения
+        options.add_argument("--window-position=100,100")
         
         # Подавляем логи и предупреждения Chrome
         options.add_argument("--log-level=3")
@@ -110,6 +116,12 @@ class BrowserFetcher:
         options.add_argument("--disable-logging")
         options.add_experimental_option("excludeSwitches", ["enable-automation", "enable-logging"])
         options.add_experimental_option('useAutomationExtension', False)
+        
+        # Отключаем уведомления и изображения (для скорости)
+        options.add_experimental_option("prefs", {
+            "profile.default_content_setting_values.notifications": 2,
+            "profile.managed_default_content_settings.images": 2
+        })
         
         # Отключаем WebRTC для предотвращения утечки IP
         options.add_argument("--disable-webrtc")
@@ -174,28 +186,18 @@ class BrowserFetcher:
                 for option_name, option_value in options.experimental_options.items():
                     chrome_options.add_experimental_option(option_name, option_value)
                 
-                # Создаем драйвер с прокси (подавляем логи chromedriver)
-                service = Service(
-                    ChromeDriverManager(cache_valid_range=7).install(),  # Обновляет раз в неделю
-                    log_output=os.devnull
-                )
+                # Создаем драйвер с прокси
+                # Selenium автоматически найдет правильный ChromeDriver
                 self.driver = wiredriver.Chrome(
-                    service=service,
                     options=chrome_options,
                     seleniumwire_options=proxy_options
                 )
                 
             else:
-                # Создаем драйвер без прокси (подавляем логи chromedriver)
+                # Создаем драйвер без прокси
+                # Selenium автоматически найдет правильный ChromeDriver
                 options = self._create_options()
-                service = Service(
-                    ChromeDriverManager(cache_valid_range=7).install(),  # Обновляет раз в неделю
-                    log_output=os.devnull
-                )
-                self.driver = webdriver.Chrome(
-                    service=service,
-                    options=options
-                )
+                self.driver = webdriver.Chrome(options=options)
             
             # Убираем признаки автоматизации
             self.driver.execute_script(
@@ -433,7 +435,7 @@ if __name__ == "__main__":
     from datetime import datetime
     
     # Получаем URL из аргументов или используем тестовый
-    url = sys.argv[1] if len(sys.argv) > 1 else "https://sn22.ru/catalog/payanye-teploobmenniki/_ridan/"
+    url = sys.argv[1] if len(sys.argv) > 1 else "https://www.vseinstrumenti.ru/category/gidravlicheskie-telezhki-2082/"
     
     logger.info(f"Получение HTML со страницы: {url}")
     
@@ -454,7 +456,7 @@ if __name__ == "__main__":
     # Получаем HTML
     html = fetch_html_simple(
         url,
-        visible=False,  # False = headless режим (без окна)
+        visible=True,  # False = headless режим (без окна)
         use_proxy=use_proxy,
         proxy_manager=proxy_manager,
         clean_html=True,

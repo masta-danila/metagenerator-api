@@ -84,7 +84,7 @@ EOF
 
 ### 5. Blacklist доменов (опционально)
 
-Создайте файл `arsenkin/blacklist_domains.json` с доменами, которые нужно исключить из анализа:
+Файл `xmlriver/blacklist_domains.json` уже существует в репозитории. Можете добавить в него домены, которые нужно исключить из анализа:
 ```json
 [
   "yandex.ru",
@@ -105,45 +105,81 @@ python main.py
 
 ## Тестирование отдельных модулей
 
-### Чтение Google Sheets
+### Шаг 1: Чтение Google Sheets
 ```bash
 python gsheets/sheets_reader.py
 ```
-Результат: `jsontests/sheets_data.json`
+Результат: `jsontests/step1_sheets_data.json`
 
-### Поиск конкурентов (Arsenkin API)
+### Шаг 3: Частотность запросов (XMLRiver Wordstat)
 ```bash
-python arsenkin/search_batch_processor.py
+python xmlriver/wordstat_batch.py
 ```
-Входные данные: `jsontests/sheets_data.json`
-Результат: `jsontests/search_batch_results.json`
+Входные данные: `jsontests/step2_data_update_stats.json`
+Результат: `jsontests/step3_wordstat_result.json`
 
-### Парсинг метатегов (Arsenkin API)
+### Шаг 4: Поиск конкурентов (XMLRiver Yandex Search)
 ```bash
-python arsenkin/h_parser.py
+python xmlriver/yandex_parser.py
 ```
-Входные данные: `jsontests/search_batch_results.json`
-Результат: `jsontests/arsenkin_h_results.json`
+Входные данные: `jsontests/step3_wordstat_result.json`
+Результат: `jsontests/step4_yandex_competitors.json`
 
-### Лемматизация текстов
+### Шаг 5: Парсинг HTML (httpx)
+```bash
+python site_parser/batch_html_processor.py
+```
+Входные данные: `jsontests/step4_yandex_competitors.json`
+Результат: `jsontests/step5_html_parsed.json`
+
+### Шаг 6: Повторный парсинг через браузер (Selenium)
+```bash
+python site_parser/batch_browser_processor.py
+```
+Входные данные: `jsontests/step5_html_parsed.json`
+Результат: `jsontests/step6_browser_reparsed.json`
+
+### Шаг 7: Извлечение метатегов
+```bash
+python site_parser/batch_meta_processor.py
+```
+Входные данные: `jsontests/step6_browser_reparsed.json`
+Результат: `jsontests/step7_extracted_meta.json`
+
+### Шаг 9: Классификация страниц (LLM)
+```bash
+python site_parser/batch_page_classifier.py
+```
+Входные данные: `jsontests/step8_validated.json`
+Результат: `jsontests/step9_classified.json`
+
+### Шаг 10: Лемматизация текстов
 ```bash
 python lemmatizers/lemmatizer_processor.py
 ```
-Входные данные: `jsontests/arsenkin_h_results.json`
-Результат: `jsontests/lemmatizer_processor_results.json`
+Входные данные: `jsontests/step9_classified.json`
+Результат: `jsontests/step10_lemmatized.json`
 
-### Генерация метатегов (LLM)
+### Шаг 12: Генерация метатегов (LLM)
 ```bash
 python metagenerators/metagenerator_batch.py
 ```
-Входные данные: `jsontests/lemmatizer_processor_results.json`
-Результат: `jsontests/metagenerator_batch_results.json`
+Входные данные: `jsontests/step11_metagenerator_input.json`
+Результат: `jsontests/step12_generated_metatags.json`
 
-### Обновление Google Sheets
+### Шаг 13: Редактор метатегов (LLM)
+```bash
+python metagenerators/metatag_editor_batch.py
+```
+Входные данные: `jsontests/step12_generated_metatags.json`
+Результат: `jsontests/step13_edited_metatags.json`
+
+### Шаг 14: Обновление Google Sheets
 ```bash
 python gsheets/sheets_updater.py
 ```
-Входные данные: `jsontests/metagenerator_batch_results.json`
+Входные данные: `jsontests/step13_edited_metatags.json` (или `step12_generated_metatags.json` если редактор выключен)
+Результат: `jsontests/step14_meta_update_stats.json`
 
 ## Просмотр логов
 
@@ -154,9 +190,12 @@ python gsheets/sheets_updater.py
 tail -f logs/pipeline.log
 
 # Просмотр конкретного модуля
-tail -f logs/search.log
-tail -f logs/parser.log
-tail -f logs/metagenerator.log
+tail -f logs/search.log              # XMLRiver API запросы
+tail -f logs/html_parser.log         # Парсинг HTML через httpx
+tail -f logs/browser_fetcher.log     # Браузерный парсинг (Selenium)
+tail -f logs/page_classifier.log     # Классификация страниц
+tail -f logs/metagenerator.log       # Генерация метатегов
+tail -f logs/sheets_updater.log      # Обновление Google Sheets
 ```
 
 ## Настройка параметров
@@ -167,36 +206,59 @@ tail -f logs/metagenerator.log
 # Интервал между циклами
 SLEEP_MINUTES = 10  # Минут между запусками
 
+# Флаги включения/выключения модулей
+ENABLE_BROWSER_REPARSING = True   # Повторный парсинг через браузер
+ENABLE_PAGE_CLASSIFIER = True     # Классификация типов страниц
+ENABLE_METATAG_EDITOR = False     # Редактор метатегов (дополнительная LLM проверка)
+
 # В функции run_full_pipeline():
 
-# Шаг 2: Поиск конкурентов
-process_sheets_data(
-    sheets_data=data,
-    se_type=3,              # Тип поисковой системы (3 = Яндекс)
+# Шаг 4: Поиск конкурентов (XMLRiver Yandex Search)
+yandex_data = process_sheets_data(
+    input_data=wordstat_data,
+    max_concurrent=5,       # Одновременных запросов к XMLRiver API
+    max_urls_per_query=10,  # Максимум URL на каждый запрос
     region=213,             # ID региона (213 = Москва)
-    max_wait_time=600,      # Макс. время ожидания (сек)
-    wait_per_query=15,      # Интервал проверки статуса (сек)
-    is_snippet=False,       # Получать сниппеты
-    urls_per_query=5,       # Топ-N конкурентов от каждого запроса
-    max_concurrent=2        # Одновременных запросов
+    blacklist_file="xmlriver/blacklist_domains.json"
 )
 
-# Шаг 4: Лемматизация
-process_urls_with_lemmatization(
-    data=data,
+# Шаг 9: Классификация страниц (опционально)
+classified_data = classify_batch(
+    input_data=validated_data,
+    model="claude-haiku-4-5-20251001",  # Быстрая модель для классификации
+    max_concurrent=3,       # Одновременных запросов к LLM
+    max_retries=3
+)
+
+# Шаг 10: Лемматизация
+lemmatized_data = process_urls_with_lemmatization(
+    data=classified_data,
     title_min_words=4,      # Мин. слов для Title
     title_max_words=6,      # Макс. слов для Title
     description_min_words=6,  # Мин. слов для Description
     description_max_words=10  # Макс. слов для Description
 )
 
-# Шаг 5: Генерация метатегов
-generate_metatags_batch(
-    data=data,
-    model="claude-sonnet-4-5-20250929",  # Модель LLM
-    max_concurrent=2,       # Одновременных запросов к LLM
-    max_retries=3           # Попыток при ошибке
+# Шаг 12: Генерация метатегов
+generated_data = generate_metatags_batch(
+    data=prepared_data,
+    model="claude-sonnet-4-5-20250929",  # Основная модель для генерации
+    max_concurrent=3,       # Одновременных запросов к LLM
+    max_retries=3,
+    max_title_length=90,    # Макс. длина title
+    max_description_length=170  # Макс. длина description
 )
+
+# Шаг 13: Редактор метатегов (опционально)
+if ENABLE_METATAG_EDITOR:
+    edited_data = review_metatags_batch(
+        data=generated_data,
+        model="claude-haiku-4-5-20251001",  # Быстрая модель для проверки
+        max_concurrent=3,
+        max_retries=3,
+        max_title_length=90,
+        max_description_length=170
+    )
 ```
 
 ## Остановка программы
@@ -217,13 +279,26 @@ ls -la gsheets/credentials.json
 chmod 600 gsheets/credentials.json
 ```
 
-### Ошибка: 429 Too Many Requests (Arsenkin)
+### Ошибка: 429 Too Many Requests (XMLRiver)
 ```bash
-# API позволяет максимум 30 запросов/мин
-# Увеличьте паузы в main.py:
-# - await asyncio.sleep(120)  # между шагами 2 и 3
-# - wait_per_query=15 (или больше)
-# - max_concurrent=2 (или меньше)
+# Уменьшите количество одновременных запросов:
+# - max_concurrent=3 (или меньше)
+# 
+# Проверьте стоимость запросов:
+cat xmlriver/xmlriver_pricing.json
+cat utils/usd_rate.json
+```
+
+### Проблемы с браузерным парсингом
+```bash
+# Проверьте установку Chrome
+google-chrome --version
+
+# Если Chrome не установлен:
+wget https://dl.google.com/linux/direct/google-chrome-stable_current_amd64.deb
+sudo apt install ./google-chrome-stable_current_amd64.deb
+
+# ChromeDriver установится автоматически через webdriver-manager
 ```
 
 ### Ошибка: Google Sheets permission denied
@@ -251,8 +326,11 @@ python -c "import gspread; from google.oauth2.service_account import Credentials
 
 # Проверка API ключей
 python -c "from dotenv import load_dotenv; import os; load_dotenv(); \
-    print('Arsenkin:', 'OK' if os.getenv('ARSENKIN_API_KEY') else 'MISSING'); \
-    print('Anthropic:', 'OK' if os.getenv('ANTHROPIC_API_KEY') else 'MISSING')"
+    print('XMLRiver (Arsenkin):', 'OK' if os.getenv('ARSENKIN_API_KEY') else 'MISSING'); \
+    print('Anthropic:', 'OK' if os.getenv('ANTHROPIC_API_KEY') else 'MISSING'); \
+    print('OpenAI:', 'OK' if os.getenv('OPENAI_API_KEY') else 'MISSING'); \
+    print('Grok:', 'OK' if os.getenv('GROK_API_KEY') else 'MISSING'); \
+    print('DeepSeek:', 'OK' if os.getenv('DEEPSEEK_API_KEY') else 'MISSING')"
 
 # Очистка логов
 rm logs/*.log.*

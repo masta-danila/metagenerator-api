@@ -29,7 +29,7 @@ pip install -r requirements.txt
 # 3. Проверяем наличие .env файла
 if [ ! -f ".env" ]; then
     echo "ОШИБКА: Файл .env не найден!"
-    echo "Создайте файл .env с API ключами (ANTHROPIC_API_KEY, ARSENKIN_API_KEY и др.)"
+    echo "Создайте файл .env с API ключами (ANTHROPIC_API_KEY, OPENAI_API_KEY, ARSENKIN_API_KEY и др.)"
     exit 1
 else
     echo "Файл .env найден"
@@ -71,10 +71,39 @@ except Exception as e:
     exit(1)
 "
 
-# 7. Проверяем arsenkin/blacklist_domains.json
-if [ ! -f "arsenkin/blacklist_domains.json" ]; then
+# 7. Проверяем конфигурационные файлы
+if [ ! -f "xmlriver/blacklist_domains.json" ]; then
     echo "Создаю blacklist_domains.json..."
-    echo "[]" > arsenkin/blacklist_domains.json
+    echo "[]" > xmlriver/blacklist_domains.json
+fi
+
+if [ ! -f "xmlriver/xmlriver_pricing.json" ]; then
+    echo "ОШИБКА: Файл xmlriver/xmlriver_pricing.json не найден!"
+    echo "Этот файл должен быть в репозитории"
+    exit 1
+fi
+
+if [ ! -f "site_parser/page_types.json" ]; then
+    echo "ОШИБКА: Файл site_parser/page_types.json не найден!"
+    echo "Этот файл должен быть в репозитории"
+    exit 1
+fi
+
+if [ ! -f "llm/llm_pricing.json" ]; then
+    echo "ОШИБКА: Файл llm/llm_pricing.json не найден!"
+    echo "Этот файл должен быть в репозитории"
+    exit 1
+fi
+
+if [ ! -f "utils/usd_rate.json" ]; then
+    echo "Создаю utils/usd_rate.json с начальными данными..."
+    mkdir -p utils
+    echo '{
+  "last_update": "2026-01-01T00:00:00",
+  "markup_percent": 20,
+  "cache_hours": 24,
+  "usd_rate": 91.5
+}' > utils/usd_rate.json
 fi
 
 # 8. Создаем необходимые директории
@@ -86,10 +115,11 @@ echo ""
 echo "Развертывание завершено успешно!"
 echo ""
 echo "Доступные команды для запуска:"
-echo "   python main.py                             # Основной цикл генерации метатегов"
+echo "   python main.py                             # Основной пайплайн (14 шагов)"
 echo "   python gsheets/sheets_reader.py            # Чтение данных из Google Sheets"
-echo "   python arsenkin/search_batch_processor.py  # Поиск конкурентов"
-echo "   python arsenkin/h_parser.py                # Парсинг метатегов"
+echo "   python xmlriver/yandex_parser.py           # Поиск конкурентов через XMLRiver"
+echo "   python site_parser/batch_page_classifier.py # Классификация страниц"
+echo "   python metagenerators/metagenerator_batch.py # Генерация метатегов"
 echo ""
 echo "Управление systemd сервисом:"
 echo "   sudo systemctl status seotools             # Статус сервиса"

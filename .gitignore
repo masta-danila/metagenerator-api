@@ -12,6 +12,7 @@ env/
 .env
 gsheets/credentials.json
 gsheets/spreadsheets.json
+utils/usd_rate.json
 
 # IDE
 .vscode/

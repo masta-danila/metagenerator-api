@@ -40,9 +40,10 @@ cd seotools
 **ВАЖНО:** Эти файлы содержат секретные данные и не хранятся в Git!
 
 ### 2.1. На локальной машине убедитесь, что у вас есть:
-- `.env` - API ключи (ANTHROPIC_API_KEY, OPENAI_API_KEY, ARSENKIN_API_KEY и др.)
+- `.env` - API ключи (ANTHROPIC_API_KEY, OPENAI_API_KEY, ARSENKIN_API_KEY, GROK_API_KEY, DEEPSEEK_API_KEY и др.)
 - `gsheets/credentials.json` - credentials из Google Cloud Console
 - `gsheets/spreadsheets.json` - ID Google таблиц
+- `utils/usd_rate.json` - конфигурация курса USD (создастся автоматически, если отсутствует)
 
 ### 2.2. Скопируйте файлы на сервер:
 ```bash
@@ -74,11 +75,13 @@ chmod +x setup_systemd_service.sh
 
 Этот скрипт:
 - Создаст виртуальное окружение
-- Установит зависимости из requirements.txt
+- Установит зависимости из requirements.txt (включая Selenium, ChromeDriver и др.)
 - Проверит наличие .env и credentials.json
 - Проверит подключение к Google Sheets
 - Создаст необходимые директории (logs/, jsontests/)
-- Создаст arsenkin/blacklist_domains.json если его нет
+- Создаст xmlriver/blacklist_domains.json если его нет
+- Проверит наличие конфигурационных файлов (page_types.json, llm_pricing.json, xmlriver_pricing.json)
+- Создаст utils/usd_rate.json с начальной конфигурацией курса USD
 
 ## Шаг 4: Настройка systemd службы
 
@@ -134,8 +137,11 @@ sudo journalctl -u seotools -n 100
 # Логи приложения (из папки logs/)
 tail -f /home/callchecker/seotools/logs/pipeline.log
 tail -f /home/callchecker/seotools/logs/search.log
-tail -f /home/callchecker/seotools/logs/parser.log
+tail -f /home/callchecker/seotools/logs/html_parser.log
+tail -f /home/callchecker/seotools/logs/browser_fetcher.log
+tail -f /home/callchecker/seotools/logs/page_classifier.log
 tail -f /home/callchecker/seotools/logs/metagenerator.log
+tail -f /home/callchecker/seotools/logs/sheets_updater.log
 ```
 
 ## Обновление проекта
@@ -187,12 +193,18 @@ tail -f /home/callchecker/*/logs/*.log
 ```python
 SLEEP_MINUTES = 10  # Интервал между циклами в минутах
 
-# В функции run_full_pipeline() параметры для каждого шага:
-# - max_concurrent=2          # Одновременных запросов к API
-# - wait_per_query=15         # Интервал проверки статуса
-# - title_min_words=4         # Мин. слов для title
-# - title_max_words=6         # Макс. слов для title
-# - model="claude-sonnet-4-5-20250929"  # Модель LLM
+# Флаги включения/выключения модулей
+ENABLE_BROWSER_REPARSING = True   # Браузерный парсинг для неудачных URL
+ENABLE_PAGE_CLASSIFIER = True     # Классификация типов страниц
+ENABLE_METATAG_EDITOR = False     # Редактор метатегов (дополнительная проверка LLM)
+
+# Параметры для каждого шага:
+# - max_concurrent=5             # Одновременных запросов к XMLRiver API
+# - max_urls_per_query=10        # Максимум URL на запрос
+# - min_success_rate=0.5         # Минимальный процент успешных парсингов
+# - model="claude-sonnet-4-5-20250929"  # Модель LLM для генерации
+# - max_title_length=90          # Максимальная длина title
+# - max_description_length=170   # Максимальная длина description
 ```
 
 После изменения параметров:
@@ -229,13 +241,31 @@ python -c "import gspread; from google.oauth2.service_account import Credentials
     client = gspread.authorize(creds); print('OK')"
 ```
 
-### Ошибки с Arsenkin API
+### Ошибки с XMLRiver API
 ```bash
 # Проверьте .env
 cat .env | grep ARSENKIN_API_KEY
 
-# Проверьте rate limiting
-# API позволяет не более 30 запросов/мин и 5 задач одновременно
+# Проверьте конфигурацию
+cat xmlriver/xmlriver_pricing.json
+
+# Проверьте курс USD
+cat utils/usd_rate.json
+```
+
+### Ошибки с браузерным парсингом
+```bash
+# Проверьте установку ChromeDriver
+which chromedriver
+
+# Проверьте Google Chrome
+google-chrome --version
+
+# Установка Chrome на сервере (если отсутствует)
+wget https://dl.google.com/linux/direct/google-chrome-stable_current_amd64.deb
+sudo apt install ./google-chrome-stable_current_amd64.deb
+
+# ChromeDriver установится автоматически через webdriver-manager
 ```
 
 ### Ошибки с LLM API
@@ -248,7 +278,12 @@ cd /home/callchecker/seotools
 source venv/bin/activate
 python -c "from dotenv import load_dotenv; import os; load_dotenv(); \
     print('Anthropic:', 'OK' if os.getenv('ANTHROPIC_API_KEY') else 'MISSING'); \
-    print('OpenAI:', 'OK' if os.getenv('OPENAI_API_KEY') else 'MISSING')"
+    print('OpenAI:', 'OK' if os.getenv('OPENAI_API_KEY') else 'MISSING'); \
+    print('Grok:', 'OK' if os.getenv('GROK_API_KEY') else 'MISSING'); \
+    print('DeepSeek:', 'OK' if os.getenv('DEEPSEEK_API_KEY') else 'MISSING')"
+
+# Проверьте pricing
+cat llm/llm_pricing.json
 ```
 
 ## Структура файлов на сервере
@@ -267,42 +302,75 @@ python -c "from dotenv import load_dotenv; import os; load_dotenv(); \
 │   └── ...
 └── seotools/                       # Новый проект
     ├── venv/
-    ├── arsenkin/
-    │   ├── search_parser.py
-    │   ├── h_parser.py
-    │   └── blacklist_domains.json
     ├── gsheets/
-    │   ├── credentials.json        ← Важно!
-    │   ├── spreadsheets.json       ← Важно!
+    │   ├── credentials.json        ← Важно! (секрет)
+    │   ├── spreadsheets.json       ← Важно! (секрет)
     │   ├── sheets_reader.py
-    │   └── sheets_updater.py
+    │   ├── sheets_updater.py
+    │   └── data_updater.py
+    ├── xmlriver/
+    │   ├── wordstat_frequency.py
+    │   ├── wordstat_batch.py
+    │   ├── yandex_parser.py
+    │   ├── xmlriver_pricing.json
+    │   └── blacklist_domains.json
+    ├── site_parser/
+    │   ├── html_parser.py
+    │   ├── batch_html_processor.py
+    │   ├── browser_fetcher.py
+    │   ├── batch_browser_processor.py
+    │   ├── page_classifier.py
+    │   ├── batch_page_classifier.py
+    │   ├── meta_extractor.py
+    │   ├── batch_meta_processor.py
+    │   ├── parsing_validator.py
+    │   └── page_types.json
     ├── lemmatizers/
     │   ├── lemmatizer.py
     │   └── lemmatizer_processor.py
     ├── metagenerators/
     │   ├── metagenerator.py
-    │   └── metagenerator_batch.py
-    ├── parsers/
+    │   ├── metagenerator_batch.py
+    │   ├── metatag_editor.py
+    │   └── metatag_editor_batch.py
     ├── llm/
+    │   ├── llm_router.py
+    │   ├── llm_response_cleaner.py
+    │   ├── claude_request.py
+    │   ├── gpt_request.py
+    │   ├── grok_request.py
+    │   ├── deepseek_request.py
+    │   └── llm_pricing.json
+    ├── utils/
+    │   ├── usd_rate_updater.py
+    │   └── usd_rate.json          ← Создается автоматически
     ├── logs/
     ├── jsontests/
-    ├── .env                        ← Важно!
+    ├── .env                        ← Важно! (секрет)
     ├── main.py
     ├── logger_config.py
-    └── ...
+    ├── requirements.txt
+    ├── deploy_server.sh
+    ├── setup_systemd_service.sh
+    ├── seotools.service
+    └── DEPLOY.md
 ```
 
 ## Безопасность
 
 1. **Файлы с секретами не должны попадать в Git:**
-   - `.env`
-   - `gsheets/credentials.json`
-   - `jsontests/*.json` (могут содержать URL клиентов)
+   - `.env` - API ключи (добавлен в .gitignore)
+   - `gsheets/credentials.json` - Google Cloud credentials (добавлен в .gitignore)
+   - `gsheets/spreadsheets.json` - ID таблиц клиентов (добавлен в .gitignore)
+   - `jsontests/*.json` - тестовые данные (добавлены в .gitignore)
+   - `logs/*.log` - логи могут содержать URL клиентов (добавлены в .gitignore)
+   - `utils/usd_rate.json` - может содержать бизнес-данные (добавлен в .gitignore)
 
 2. **Права на файлы:**
 ```bash
 chmod 600 .env
 chmod 600 gsheets/credentials.json
+chmod 600 gsheets/spreadsheets.json
 chmod 755 *.sh
 ```
 
@@ -310,27 +378,70 @@ chmod 755 *.sh
 ```bash
 # Регулярно чистите старые логи
 find logs/ -name "*.log.*" -mtime +30 -delete
+
+# Проверьте, что логи не попадают в git
+cat .gitignore | grep logs
 ```
 
 ## Архитектура пайплайна
 
 Проект работает в бесконечном цикле с интервалом 10 минут:
 
-1. **Шаг 1/6**: Чтение данных из Google Sheets (лист Meta и Data)
-2. **Шаг 2/6**: Получение ссылок конкурентов через Arsenkin API (check-top)
-3. **Шаг 3/6**: Получение метатегов страниц через Arsenkin API (check-h)
-4. **Шаг 4/6**: Лемматизация текстов (извлечение ключевых слов)
-5. **Шаг 5/6**: Генерация метатегов через LLM (Claude/OpenAI/Gemini)
-6. **Шаг 6/6**: Загрузка результатов обратно в Google Sheets
+1. **Шаг 1/14**: Чтение данных из Google Sheets (листы Meta и Data)
+2. **Шаг 2/14**: Обновление таблиц Data (сохранение стоимости API запросов)
+3. **Шаг 3/14**: Получение частотности запросов через XMLRiver Wordstat API
+4. **Шаг 4/14**: Поиск конкурентов через XMLRiver Yandex Search API
+5. **Шаг 5/14**: Первичный парсинг HTML (httpx)
+6. **Шаг 6/14**: Повторный парсинг неудачных URL через браузер (Selenium) - опционально
+7. **Шаг 7/14**: Извлечение метатегов из HTML (основные и конкурентные URL)
+8. **Шаг 8/14**: Валидация качества парсинга
+9. **Шаг 9/14**: Классификация типов страниц через LLM - опционально
+10. **Шаг 10/14**: Лемматизация текстов (pymystem3, pymorphy3)
+11. **Шаг 11/14**: Формирование данных для генерации метатегов
+12. **Шаг 12/14**: Генерация метатегов через LLM (Claude/GPT/Grok/DeepSeek)
+13. **Шаг 13/14**: Редактор метатегов (дополнительная проверка LLM) - опционально
+14. **Шаг 14/14**: Загрузка результатов в Google Sheets
 
-### Rate Limits Arsenkin API:
-- Максимум 30 запросов в минуту
-- Максимум 5 задач одновременно
-- Пауза 120 секунд между шагами 2 и 3 для соблюдения лимитов
+### Подсчет стоимости API:
+Для каждого URL отслеживается:
+- **Wordstat cost**: Стоимость запросов частотности
+- **Yandex search cost**: Стоимость поиска конкурентов
+- **Classification cost**: Стоимость классификации страниц
+- **Metageneration cost**: Стоимость генерации метатегов
+- **Metatag editor cost**: Стоимость проверки редактором (если включен)
+- **Cost**: Общая стоимость в рублях (с конвертацией через ЦБ РФ)
+
+### XMLRiver API:
+- Используется для Wordstat и Yandex Search
+- Стоимость настраивается в `xmlriver/xmlriver_pricing.json`
+- Автоматический подсчет стоимости для каждого запроса
+
+## Установка Google Chrome на сервере
+
+Для работы браузерного парсинга (Selenium) необходим Google Chrome:
+
+```bash
+# Загрузка и установка Chrome
+cd /tmp
+wget https://dl.google.com/linux/direct/google-chrome-stable_current_amd64.deb
+sudo apt install ./google-chrome-stable_current_amd64.deb
+
+# Проверка установки
+google-chrome --version
+
+# ChromeDriver установится автоматически через webdriver-manager
+# при первом запуске браузерного парсинга
+```
+
+**Примечание**: Если Chrome уже установлен на сервере (для callchecker или revchecker), повторная установка не требуется.
 
 ## Дополнительные ресурсы
 
-- **Arsenkin API**: https://help.arsenkin.ru/api
+- **XMLRiver API**: https://xmlriver.com/
 - **Google Sheets API**: https://developers.google.com/sheets/api
 - **Anthropic Claude API**: https://docs.anthropic.com/claude/reference
 - **OpenAI API**: https://platform.openai.com/docs/api-reference
+- **xAI Grok API**: https://docs.x.ai/docs
+- **DeepSeek API**: https://platform.deepseek.com/api-docs
+- **Selenium Documentation**: https://selenium-python.readthedocs.io/
+- **ЦБ РФ API (курс валют)**: https://www.cbr.ru/development/sxml/

@@ -1,0 +1,32 @@
+# Google Sheets API
+gspread==6.1.4
+google-auth==2.37.0
+google-auth-oauthlib==1.2.1
+google-auth-httplib2==0.2.0
+
+# HTTP клиент
+httpx==0.28.1
+
+# HTML парсинг
+beautifulsoup4==4.12.3
+lxml==5.3.0
+
+# Браузерный парсинг
+selenium==4.27.1
+selenium-wire==5.1.0
+webdriver-manager==4.0.2
+blinker==1.9.0
+
+# Лемматизация и морфология
+pymystem3==0.2.0
+pymorphy3==2.0.2
+pymorphy3-dicts-ru==2.4.417150.4580142
+
+# Переменные окружения
+python-dotenv==1.0.1
+
+# LLM API
+anthropic==0.42.0
+openai==1.59.7
+
+# Утилиты

@@ -10,6 +10,12 @@ from pathlib import Path
 
 import undetected_chromedriver as uc
 
+# Импортируем решатель антибот защит
+try:
+    from .antibot_solver import AntibotSolver
+except ImportError:
+    from antibot_solver import AntibotSolver
+
 # Отключаем SSL проверку для загрузки драйвера
 ssl._create_default_https_context = ssl._create_unverified_context
 
@@ -119,121 +125,16 @@ class BrowserFetcher:
             initial_wait = max(wait_time, 8)  # минимум 8 секунд
             time.sleep(initial_wait)
             
-            # Проверяем есть ли антибот защита и кликаем на кнопку
-            max_antibot_wait = 15  # максимум 15 секунд на антибот
-            antibot_keywords = ['antiprotectbot', 'antibot cloud', 'checking your browser', 'just a moment', 'идёт загрузка']
-            
+            # Проверяем и обходим антибот защиты через AntibotSolver
             html = self.driver.page_source
+            
             if html:
-                html_lower = html.lower()
-                has_antibot = any(keyword in html_lower for keyword in antibot_keywords)
+                # Используем AntibotSolver - он автоматически определит и обойдет защиту
+                solver = AntibotSolver(self.driver)
+                solver.solve(html, max_wait=15)
                 
-                if has_antibot:
-                    logger.info(f"Обнаружена антибот защита, пытаемся пройти...")
-                    
-                    # Пробуем найти и кликнуть на кнопку "Я не робот"
-                    try:
-                        from selenium.webdriver.common.by import By
-                        from selenium.webdriver.support.ui import WebDriverWait
-                        from selenium.webdriver.support import expected_conditions as EC
-                        
-                        # Ждем 5 секунд чтобы JS отрендерил кнопки (антибот загружается медленно)
-                        time.sleep(5)
-                        
-                        # Ищем кнопку по различным селекторам (регистронезависимо)
-                        button_selectors = [
-                            "//div[contains(translate(text(), 'АБВГДЕЁЖЗИЙКЛМНОПРСТУФХЦЧШЩЪЫЬЭЮЯ', 'абвгдеёжзийклмнопрстуфхцчшщъыьэюя'), 'не робот')]",
-                            "//div[contains(@class, 's5744')]",  # начало класса
-                            "//div[contains(@onclick, 'f0cbedf')]",  # начало onclick
-                            "//div[contains(@class, 'yBkZMgq')]",  # другой класс из HTML
-                        ]
-                        
-                        button_clicked = False
-                        
-                        # Находим кнопку по тексту "I'm not a robot" БЕЗ display:none
-                        try:
-                            js_click = """
-                            // Находим все div с текстом "I'm not a robot" или "Я не робот"
-                            var allDivs = document.querySelectorAll('div');
-                            var buttons = [];
-                            
-                            for(var i=0; i<allDivs.length; i++) {
-                                var text = allDivs[i].textContent.trim();
-                                if (text === "I'm not a robot" || text === "Я не робот") {
-                                    buttons.push(allDivs[i]);
-                                }
-                            }
-                            
-                            if (buttons.length === 0) return 0;
-                            
-                            // Выбираем видимую кнопку (без display:none)
-                            for(var i=0; i<buttons.length; i++) {
-                                var style = window.getComputedStyle(buttons[i]);
-                                if (style.display !== 'none' && buttons[i].offsetParent !== null) {
-                                    buttons[i].click();
-                                    return 1;
-                                }
-                            }
-                            
-                            // Если не нашли видимую - кликаем первую
-                            if (buttons.length > 0) {
-                                buttons[0].click();
-                                return 1;
-                            }
-                            
-                            return 0;
-                            """
-                            result = self.driver.execute_script(js_click)
-                            if result and result > 0:
-                                logger.info(f"Кликнули на кнопку антибот защиты (по тексту)")
-                                button_clicked = True
-                            else:
-                                logger.warning("JS не нашел кнопки антибот защиты")
-                        except Exception as e:
-                            logger.warning(f"JS клик не сработал: {e}")
-                        
-                        # Если JS не сработал - пробуем через Selenium
-                        if not button_clicked:
-                            for selector in button_selectors:
-                                try:
-                                    button = WebDriverWait(self.driver, 5).until(
-                                        EC.element_to_be_clickable((By.XPATH, selector))
-                                    )
-                                    button.click()
-                                    logger.info(f"Кликнули на кнопку антибот защиты (селектор: {selector[:50]}...)")
-                                    button_clicked = True
-                                    break
-                                except Exception as e:
-                                    continue
-                        
-                        if button_clicked:
-                            # После клика защита снимается сразу - ждем 3 секунды
-                            time.sleep(3)
-                            html = self.driver.page_source
-                            html_lower = html.lower() if html else ""
-                            
-                            has_antibot = any(keyword in html_lower for keyword in antibot_keywords)
-                            if not has_antibot:
-                                logger.info(f"Антибот защита пройдена после клика")
-                            else:
-                                logger.warning("Защита не снялась после клика, ждем еще...")
-                                # Если не снялась сразу - ждем еще
-                                for attempt in range(5):
-                                    time.sleep(1)
-                                    html = self.driver.page_source
-                                    html_lower = html.lower() if html else ""
-                                    has_antibot = any(keyword in html_lower for keyword in antibot_keywords)
-                                    if not has_antibot:
-                                        logger.info(f"Антибот защита пройдена через {attempt + 1} дополнительных секунд")
-                                        break
-                        else:
-                            logger.warning("Не удалось найти кнопку антибот защиты")
-                    
-                    except Exception as e:
-                        logger.warning(f"Ошибка при клике на антибот: {e}")
-                    
-                    if has_antibot:
-                        logger.warning(f"Антибот защита НЕ пройдена за {max_antibot_wait} секунд")
+                # Получаем финальный HTML после обхода защит
+                html = self.driver.page_source
             
             if not html:
                 logger.error("HTML не получен (None)")

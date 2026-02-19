@@ -136,12 +136,13 @@ async def run_full_pipeline() -> bool:
         try:
             data = reparse_failed_urls_with_browser(
                 data=data,
-                max_concurrent=2,  # 2 браузера параллельно
+                max_concurrent=5,  # 5 браузеров параллельно
                 max_retries=2,  # 2 попытки на URL
                 wait_time=5,  # 5 секунд ожидания после загрузки
                 use_proxy=True,  # Автоматически загрузит прокси из proxy.txt если есть
                 min_html_length=2000,  # Минимальная длина HTML
-                device_type="desktop"  # Тип устройства
+                device_type="desktop",  # Тип устройства
+                visible=True  # Видимый режим (headless детектируется)
             )
             # save_step_results(data, "step7_html_reparsed.json")
         except Exception as e:

@@ -507,14 +507,14 @@ if __name__ == "__main__":
         # Запускаем повторный парсинг через браузер
         results = reparse_failed_urls_with_browser(
             data=data,
-            max_concurrent=10,          # 1 браузер последовательно
+            max_concurrent=10,         # 10 браузеров параллельно
             max_retries=2,             # 2 попытки на каждый URL
             wait_time=5,               # 5 сек ожидания после загрузки
             use_proxy=use_proxy,       # Используем прокси если есть proxy.txt
             proxy_manager=proxy_manager,  # Передаем менеджер прокси
             min_html_length=2000,      # Минимальная длина HTML в символах
             device_type="desktop",     # Тип устройства для эмуляции
-            visible=False,             # Headless режим
+            visible=True,              # Видимый режим (headless детектируется)
             skip_problematic=False     # НЕ пропускаем
         )
         

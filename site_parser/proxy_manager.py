@@ -19,8 +19,8 @@ class ProxyManager:
         
         Args:
             proxy_file: путь к файлу с прокси
-                       По умолчанию ищет proxy.txt в папке browser/
-                       Формат: IP:PORT:USERNAME:PASSWORD (одна строка - один прокси)
+                       По умолчанию ищет proxy.txt в папке site_parser/
+                       Формат: IP:PORT или IP:PORT:USERNAME:PASSWORD (одна строка - один прокси)
         """
         # Если путь не указан, используем proxy.txt из папки browser
         if proxy_file is None:
@@ -67,7 +67,9 @@ class ProxyManager:
         except FileNotFoundError:
             print(f"Файл {self.proxy_file} не найден")
             print("Создайте файл proxy.txt с прокси в формате:")
-            print("   IP:PORT:USERNAME:PASSWORD")
+            print("   IP:PORT (без авторизации)")
+            print("   IP:PORT:USERNAME:PASSWORD (с авторизацией)")
+            print("   Пример: 192.168.1.1:8080")
             print("   Пример: 192.168.1.1:8080:user:pass")
             self.proxies = []
         
@@ -77,14 +79,24 @@ class ProxyManager:
     
     def parse_proxy_line(self, line: str) -> Optional[Dict]:
         """
-        Парсинг строки прокси в формате: IP:PORT:USERNAME:PASSWORD
+        Парсинг строки прокси в формате: 
+        - IP:PORT (без авторизации)
+        - IP:PORT:USERNAME:PASSWORD (с авторизацией)
         """
         try:
             line = line.strip()
             parts = line.split(':')
             
-            if len(parts) == 4:
-                # ip:port:username:password
+            if len(parts) == 2:
+                # ip:port (без авторизации)
+                return {
+                    'ip': parts[0],
+                    'port': parts[1],
+                    'username': None,
+                    'password': None
+                }
+            elif len(parts) == 4:
+                # ip:port:username:password (с авторизацией)
                 return {
                     'ip': parts[0],
                     'port': int(parts[1]),
@@ -93,7 +105,7 @@ class ProxyManager:
                     'protocol': 'http'
                 }
             else:
-                print(f"Неверный формат прокси '{line}' (ожидается IP:PORT:USERNAME:PASSWORD)")
+                print(f"Неверный формат прокси '{line}' (ожидается IP:PORT или IP:PORT:USERNAME:PASSWORD)")
                 return None
         
         except Exception as e:

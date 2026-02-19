@@ -134,13 +134,14 @@ async def run_full_pipeline() -> bool:
     if ENABLE_BROWSER_REPARSE:
         logger.info("ШАГ 7/14: Повторный парсинг неудачных URL через браузер")
         try:
-            data = await reparse_failed_urls_with_browser(
+            data = reparse_failed_urls_with_browser(
                 data=data,
-                max_concurrent=5,  # Браузер: меньше одновременных запросов
-                max_retries=1,  # Повторные попытки для браузера
-                use_proxy=False,  # Использовать прокси или нет
-                min_html_length=1000,  # Минимальная длина HTML
-                device_type="desktop"  # Тип устройства: "desktop" или "mobile" (должно совпадать с шагом 5)
+                max_concurrent=2,  # 2 браузера параллельно
+                max_retries=2,  # 2 попытки на URL
+                wait_time=5,  # 5 секунд ожидания после загрузки
+                use_proxy=True,  # Автоматически загрузит прокси из proxy.txt если есть
+                min_html_length=2000,  # Минимальная длина HTML
+                device_type="desktop"  # Тип устройства
             )
             # save_step_results(data, "step7_html_reparsed.json")
         except Exception as e:

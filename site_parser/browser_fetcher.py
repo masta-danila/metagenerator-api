@@ -10,11 +10,13 @@ from pathlib import Path
 
 import undetected_chromedriver as uc
 
-# Импортируем решатель антибот защит
+# Импортируем решатель антибот защит и клинер HTML
 try:
     from .antibot_solver import AntibotSolver
+    from .html_cleaner import compress_html_for_classification
 except ImportError:
     from antibot_solver import AntibotSolver
+    from html_cleaner import compress_html_for_classification
 
 # Отключаем SSL проверку для загрузки драйвера
 ssl._create_default_https_context = ssl._create_unverified_context
@@ -144,6 +146,12 @@ class BrowserFetcher:
             if len(html) < min_html_length:
                 logger.error(f"HTML слишком короткий: {len(html)} < {min_html_length} символов")
                 return None
+            
+            # Очистка HTML если требуется
+            if clean_html:
+                logger.info(f"Очистка HTML ({len(html)} символов)...")
+                html = compress_html_for_classification(html)
+                logger.info(f"HTML очищен ({len(html)} символов)")
             
             logger.info(f"HTML получен ({len(html)} символов)")
             return html

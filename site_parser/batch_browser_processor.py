@@ -138,7 +138,7 @@ def parse_url_with_browser(
                 raise Exception("Не удалось запустить браузер")
             
             # ПРОСТАЯ загрузка - как в debug_vseinstrumenti.py (БЕЗ эмуляции!)
-            html = fetcher.fetch_html(url, wait_time=wait_time, clean_html=False, min_html_length=min_html_length, emulate_user=False)
+            html = fetcher.fetch_html(url, wait_time=wait_time, clean_html=True, min_html_length=min_html_length, emulate_user=False)
             
             # Закрываем браузер (как в debug - без лишних задержек)
             fetcher.close()
@@ -212,6 +212,27 @@ def reparse_failed_urls_with_browser(
         Обновленный словарь с исправленными данными
     """
     logger.info("ПОВТОРНЫЙ ПАРСИНГ URL С ОШИБКАМИ ЧЕРЕЗ БРАУЗЕР (SELENIUM)")
+    
+    # Автоматически загружаем прокси если use_proxy=True но proxy_manager=None
+    if use_proxy and proxy_manager is None:
+        proxy_file = Path(__file__).parent / "proxy.txt"
+        if proxy_file.exists():
+            try:
+                from proxy_manager import ProxyManager
+                proxy_manager = ProxyManager()
+                if proxy_manager.proxies:
+                    logger.info(f"Автоматически загружено {len(proxy_manager.proxies)} прокси из {proxy_file}")
+                else:
+                    logger.warning("proxy.txt пустой - работаем без прокси")
+                    use_proxy = False
+            except Exception as e:
+                logger.warning(f"Не удалось загрузить прокси: {e}")
+                logger.info("Работаем без прокси")
+                use_proxy = False
+        else:
+            logger.info("proxy.txt не найден - работаем без прокси")
+            use_proxy = False
+    
     logger.info(f"- Макс. одновременных браузеров: {max_concurrent}")
     logger.info(f"- Попыток на URL: {max_retries}")
     logger.info(f"- Ожидание загрузки JS: {wait_time}s")
@@ -220,6 +241,8 @@ def reparse_failed_urls_with_browser(
     logger.info(f"- Режим браузера: {'Видимый' if visible else 'Headless'}")
     if use_proxy and proxy_manager:
         logger.info(f"- Используются прокси: {len(proxy_manager.proxies)} доступно")
+    else:
+        logger.info(f"- Прокси: НЕ используются")
     
     # Шаг 1: Извлекаем URL с ошибками
     logger.info("[ШАГ 1] Поиск URL с ошибками парсинга...")
@@ -484,14 +507,14 @@ if __name__ == "__main__":
         # Запускаем повторный парсинг через браузер
         results = reparse_failed_urls_with_browser(
             data=data,
-            max_concurrent=2,          # 1 браузер последовательно
+            max_concurrent=10,          # 1 браузер последовательно
             max_retries=2,             # 2 попытки на каждый URL
             wait_time=5,               # 5 сек ожидания после загрузки
             use_proxy=use_proxy,       # Используем прокси если есть proxy.txt
             proxy_manager=proxy_manager,  # Передаем менеджер прокси
             min_html_length=2000,      # Минимальная длина HTML в символах
             device_type="desktop",     # Тип устройства для эмуляции
-            visible=True,             # Headless режим
+            visible=False,             # Headless режим
             skip_problematic=False     # НЕ пропускаем
         )
         
@@ -499,6 +522,5 @@ if __name__ == "__main__":
         save_results(results, str(output_file))
         
         logger.info(f"ГОТОВО!")
-        logger.info(f"Исправленные данные сохранены в: {output_file}")
     
     test()

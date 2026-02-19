@@ -19,6 +19,7 @@ from collections import defaultdict
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from logger_config import get_html_parser_logger
+from site_parser.browser_fetcher import BrowserFetcher
 
 logger = get_html_parser_logger()
 
@@ -75,6 +76,13 @@ def extract_failed_urls(data: Dict) -> Dict:
     return failed_urls
 
 
+# Домены с очень сильной защитой - можно пропускать или требуют residential прокси
+# ВНИМАНИЕ: vseinstrumenti.ru работает если НЕ использовать эмуляцию!
+PROBLEMATIC_DOMAINS = [
+    # 'vseinstrumenti.ru',  # Отключено - работает в простом режиме
+    # Добавьте другие проблемные домены сюда
+]
+
 def parse_url_with_browser(
     url: str,
     use_proxy: bool = False,
@@ -83,7 +91,8 @@ def parse_url_with_browser(
     wait_time: int = 3,
     min_html_length: int = 100,
     device_type: str = "desktop",
-    visible: bool = False
+    visible: bool = False,
+    skip_problematic: bool = False
 ) -> Dict:
     """
     Синхронная функция для парсинга URL через браузер с повторными попытками
@@ -97,11 +106,20 @@ def parse_url_with_browser(
         min_html_length: Минимальная длина HTML для валидного результата
         device_type: "mobile" или "desktop"
         visible: показывать ли браузер визуально (для отладки)
+        skip_problematic: пропускать ли домены с сильной защитой
     
     Returns:
         Словарь с результатом парсинга
     """
-    from site_parser.browser_fetcher import BrowserFetcher
+    # Проверяем не находится ли домен в списке проблемных
+    if skip_problematic:
+        for domain in PROBLEMATIC_DOMAINS:
+            if domain in url:
+                logger.warning(f"[SKIP] Пропускаем URL с сильной защитой: {url}")
+                return {
+                    'url': url,
+                    'error': f'Skipped: {domain} requires residential proxies or CAPTCHA solving'
+                }
     
     for attempt in range(max_retries):
         fetcher = None
@@ -119,9 +137,10 @@ def parse_url_with_browser(
             if not fetcher.start():
                 raise Exception("Не удалось запустить браузер")
             
-            html = fetcher.fetch_html(url, wait_time=wait_time, clean_html=False, min_html_length=min_html_length, emulate_user=True)
+            # ПРОСТАЯ загрузка - как в debug_vseinstrumenti.py (БЕЗ эмуляции!)
+            html = fetcher.fetch_html(url, wait_time=wait_time, clean_html=False, min_html_length=min_html_length, emulate_user=False)
             
-            # Закрываем браузер сразу после получения HTML
+            # Закрываем браузер (как в debug - без лишних задержек)
             fetcher.close()
             fetcher = None
             
@@ -171,7 +190,8 @@ def reparse_failed_urls_with_browser(
     proxy_manager = None,
     min_html_length: int = 100,
     device_type: str = "desktop",
-    visible: bool = False
+    visible: bool = False,
+    skip_problematic: bool = True
 ) -> Dict:
     """
     Повторно парсит URL с ошибками через браузер (Selenium) используя многопоточность
@@ -186,6 +206,7 @@ def reparse_failed_urls_with_browser(
         min_html_length: Минимальная длина HTML для валидного результата
         device_type: "mobile" или "desktop" - тип устройства для эмуляции
         visible: показывать ли браузер визуально (для отладки)
+        skip_problematic: пропускать ли домены с очень сильной защитой (по умолчанию True)
     
     Returns:
         Обновленный словарь с исправленными данными
@@ -264,7 +285,8 @@ def reparse_failed_urls_with_browser(
                 wait_time=wait_time,
                 min_html_length=min_html_length,
                 device_type=device_type,
-                visible=visible
+                visible=visible,
+                skip_problematic=skip_problematic
             )
             
             with results_lock:
@@ -462,14 +484,15 @@ if __name__ == "__main__":
         # Запускаем повторный парсинг через браузер
         results = reparse_failed_urls_with_browser(
             data=data,
-            max_concurrent=1,      # ТЕСТ: только 1 браузер для проверки
-            max_retries=2,         # 2 попытки на каждый URL
-            wait_time=3,           # 3 сек ожидание загрузки JavaScript
-            use_proxy=use_proxy,   # Используем прокси (если есть proxy.txt)
-            proxy_manager=proxy_manager,
-            min_html_length=2000,  # Минимальная длина HTML в символах
-            device_type="desktop", # Тип устройства для эмуляции
-            visible=True           # ОТЛАДКА: показываем браузер визуально
+            max_concurrent=1,          # 1 браузер (как в debug)
+            max_retries=2,             # 2 попытки на каждый URL
+            wait_time=5,               # 5 сек как в debug
+            use_proxy=False,           # ВАЖНО: БЕЗ ПРОКСИ как в debug!
+            proxy_manager=None,        # Не передаем прокси
+            min_html_length=2000,      # Минимальная длина HTML в символах
+            device_type="desktop",     # Тип устройства для эмуляции
+            visible=True,             # Headless режим
+            skip_problematic=False     # НЕ пропускаем
         )
         
         # Сохраняем результаты

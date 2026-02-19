@@ -122,34 +122,32 @@ async def run_full_pipeline() -> bool:
     
     data = await parse_filtered_urls_batch(
         data=data,
-        max_concurrent=100,  # Количество одновременных запросов
+        max_concurrent=1000,  # Количество одновременных запросов
         max_retries=2,  # Количество повторных попыток при ошибках
         min_html_length=1000  # Минимальная длина HTML (меньше = ошибка)
     )
     save_step_results(data, "step6_html_parsed.json")
 
     # Шаг 7: Повторный парсинг неудачных URL через браузер
-    ENABLE_BROWSER_REPARSE = True  # Флаг: измените на False чтобы пропустить этот шаг
-    
-    if ENABLE_BROWSER_REPARSE:
-        logger.info("ШАГ 7/14: Повторный парсинг неудачных URL через браузер")
-        try:
-            data = reparse_failed_urls_with_browser(
-                data=data,
-                max_concurrent=5,  # 5 браузеров параллельно
-                max_retries=2,  # 2 попытки на URL
-                wait_time=5,  # 5 секунд ожидания после загрузки
-                use_proxy=True,  # Автоматически загрузит прокси из proxy.txt если есть
-                min_html_length=2000,  # Минимальная длина HTML
-                device_type="desktop",  # Тип устройства
-                visible=True  # Видимый режим (headless детектируется)
-            )
-            # save_step_results(data, "step7_html_reparsed.json")
-        except Exception as e:
-            logger.error(f"  ✗ Ошибка браузерного парсинга: {e}")
-            logger.warning("  → Пропускаем этап браузерного парсинга, продолжаем с имеющимися данными")
-    else:
-        logger.info("ШАГ 7/14: Повторный парсинг через браузер [ПРОПУЩЕН]")
+    # Управление через флаги reparse_main_urls и reparse_filtered_urls (оба False = пропуск этапа)
+    logger.info("ШАГ 7/14: Повторный парсинг неудачных URL через браузер")
+    try:
+        data = reparse_failed_urls_with_browser(
+            data=data,
+            max_concurrent=5,  # 5 браузеров параллельно
+            max_retries=2,  # 2 попытки на URL
+            wait_time=5,  # 5 секунд ожидания после загрузки
+            use_proxy=True,  # Автоматически загрузит прокси из proxy.txt если есть
+            min_html_length=2000,  # Минимальная длина HTML
+            device_type="desktop",  # Тип устройства
+            visible=True,  # Видимый режим (headless детектируется)
+            reparse_main_urls=True,  # Парсить основные URL (False для пропуска)
+            reparse_filtered_urls=False  # Парсить фильтрованные URL (False для пропуска)
+        )
+        # save_step_results(data, "step7_html_reparsed.json")
+    except Exception as e:
+        logger.error(f"  ✗ Ошибка браузерного парсинга: {e}")
+        logger.warning("  → Пропускаем этап браузерного парсинга, продолжаем с имеющимися данными")
     
     # Шаг 8: Валидация качества парсинга
     logger.info("ШАГ 8/14: Валидация качества парсинга")

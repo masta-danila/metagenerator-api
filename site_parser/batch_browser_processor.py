@@ -92,7 +92,9 @@ def parse_url_with_browser(
     min_html_length: int = 100,
     device_type: str = "desktop",
     visible: bool = False,
-    skip_problematic: bool = False
+    skip_problematic: bool = False,
+    url_index: int = 0,
+    total_urls: int = 0
 ) -> Dict:
     """
     Синхронная функция для парсинга URL через браузер с повторными попытками
@@ -124,7 +126,8 @@ def parse_url_with_browser(
     for attempt in range(max_retries):
         fetcher = None
         try:
-            logger.info(f"[BROWSER {attempt + 1}/{max_retries}] Парсинг: {url}")
+            progress = f"[{url_index}/{total_urls}]" if total_urls > 0 else ""
+            logger.info(f"{progress} [BROWSER {attempt + 1}/{max_retries}] Парсинг: {url}")
             
             # Создаем новый браузер для каждой попытки
             fetcher = BrowserFetcher(
@@ -191,7 +194,9 @@ def reparse_failed_urls_with_browser(
     min_html_length: int = 100,
     device_type: str = "desktop",
     visible: bool = False,
-    skip_problematic: bool = True
+    skip_problematic: bool = True,
+    reparse_main_urls: bool = True,
+    reparse_filtered_urls: bool = False
 ) -> Dict:
     """
     Повторно парсит URL с ошибками через браузер (Selenium) используя многопоточность
@@ -207,11 +212,23 @@ def reparse_failed_urls_with_browser(
         device_type: "mobile" или "desktop" - тип устройства для эмуляции
         visible: показывать ли браузер визуально (для отладки)
         skip_problematic: пропускать ли домены с очень сильной защитой (по умолчанию True)
+        reparse_main_urls: парсить ли основные URL (main_url) - по умолчанию True
+        reparse_filtered_urls: парсить ли фильтрованные URL (filtered_urls) - по умолчанию False
     
     Returns:
         Обновленный словарь с исправленными данными
     """
     logger.info("ПОВТОРНЫЙ ПАРСИНГ URL С ОШИБКАМИ ЧЕРЕЗ БРАУЗЕР (SELENIUM)")
+    
+    # Проверяем что хотя бы один флаг включен
+    if not reparse_main_urls and not reparse_filtered_urls:
+        logger.warning("Оба флага отключены (reparse_main_urls=False, reparse_filtered_urls=False)")
+        logger.warning("Нечего парсить! Возвращаем данные без изменений.")
+        return data
+    
+    logger.info(f"Настройки парсинга:")
+    logger.info(f"  - Парсить main_urls: {'✓ Да' if reparse_main_urls else '✗ Нет'}")
+    logger.info(f"  - Парсить filtered_urls: {'✓ Да' if reparse_filtered_urls else '✗ Нет'}")
     
     # Автоматически загружаем прокси если use_proxy=True но proxy_manager=None
     if use_proxy and proxy_manager is None:
@@ -250,19 +267,31 @@ def reparse_failed_urls_with_browser(
     
     main_failed_count = len(failed_urls['main_urls'])
     filtered_failed_count = len(failed_urls['filtered_urls'])
-    total_failed = main_failed_count + filtered_failed_count
     
     logger.info(f"Найдено URL с ошибками:")
     logger.info(f"  - Основных URL (main_url): {main_failed_count}")
     logger.info(f"  - Filtered URLs: {filtered_failed_count}")
-    logger.info(f"  - ВСЕГО уникальных: {total_failed}")
+    
+    # Шаг 2: Собираем URL на основе флагов
+    all_failed_urls = []
+    
+    if reparse_main_urls:
+        all_failed_urls.extend(failed_urls['main_urls'].keys())
+        logger.info(f"  → Будем парсить основные URL: {len(failed_urls['main_urls'])}")
+    
+    if reparse_filtered_urls:
+        all_failed_urls.extend(failed_urls['filtered_urls'].keys())
+        logger.info(f"  → Будем парсить фильтрованные URL: {len(failed_urls['filtered_urls'])}")
+    
+    # Убираем дубликаты
+    all_failed_urls = list(set(all_failed_urls))
+    total_failed = len(all_failed_urls)
+    
+    logger.info(f"  - ВСЕГО уникальных URL для парсинга: {total_failed}")
     
     if total_failed == 0:
-        logger.info("Нет URL для повторного парсинга! Все URL успешно спарсены.")
+        logger.info("Нет URL для повторного парсинга! Все выбранные URL успешно спарсены.")
         return data
-    
-    # Шаг 2: Собираем все уникальные URL
-    all_failed_urls = list(set(failed_urls['main_urls'].keys()) | set(failed_urls['filtered_urls'].keys()))
     logger.info(f"[ШАГ 2] Подготовка к повторному парсингу {len(all_failed_urls)} уникальных URL...")
     
     # Показываем примеры URL с ошибками
@@ -295,11 +324,12 @@ def reparse_failed_urls_with_browser(
     results = []
     results_lock = threading.Lock()
     
-    def process_batch(batch, worker_id):
+    def process_batch(batch, worker_id, batch_start_index):
         """Обработка батча URL в отдельном потоке"""
         logger.info(f"Поток {worker_id}: Начало обработки {len(batch)} URL")
         
-        for url in batch:
+        for local_idx, url in enumerate(batch):
+            url_index = batch_start_index + local_idx + 1
             result = parse_url_with_browser(
                 url=url,
                 use_proxy=use_proxy,
@@ -309,7 +339,9 @@ def reparse_failed_urls_with_browser(
                 min_html_length=min_html_length,
                 device_type=device_type,
                 visible=visible,
-                skip_problematic=skip_problematic
+                skip_problematic=skip_problematic,
+                url_index=url_index,
+                total_urls=total_failed
             )
             
             with results_lock:
@@ -319,11 +351,13 @@ def reparse_failed_urls_with_browser(
     
     threads = []
     delay_between_threads = 2  # Задержка между запуском потоков (секунды)
+    batch_start = 0
     
     for i, batch in enumerate(url_batches, 1):
-        thread = threading.Thread(target=process_batch, args=(batch, i))
+        thread = threading.Thread(target=process_batch, args=(batch, i, batch_start))
         threads.append(thread)
         thread.start()
+        batch_start += len(batch)
         
         # Даем время на инициализацию браузера перед запуском следующего
         if i < len(url_batches):
@@ -364,61 +398,65 @@ def reparse_failed_urls_with_browser(
     main_urls_fixed = 0
     filtered_urls_fixed = 0
     
-    # Обновляем main_urls
-    for url, locations in failed_urls['main_urls'].items():
-        new_data = parsed_data.get(url)
-        if new_data:
-            for loc in locations:
-                sid = loc['spreadsheet_id']
-                murl = loc['main_url']
-                
-                if 'error' not in new_data:
-                    # Дополнительная проверка длины HTML перед записью
-                    html_length = len(new_data.get('html_structure', ''))
-                    if html_length < min_html_length:
-                        logger.warning(f"HTML слишком короткий для записи ({html_length} < {min_html_length}): {url}")
-                        result_data[sid]['urls'][murl]['parsing_error'] = f"Browser: HTML too short ({html_length} < {min_html_length})"
-                    else:
-                        # Успех - добавляем HTML и удаляем ошибку
-                        result_data[sid]['urls'][murl]['html_structure'] = new_data['html_structure']
-                        result_data[sid]['urls'][murl].pop('parsing_error', None)
-                        main_urls_fixed += 1
-                        logger.debug(f"Исправлен main_url: {url}")
-                else:
-                    # Снова ошибка - обновляем текст ошибки
-                    result_data[sid]['urls'][murl]['parsing_error'] = f"Browser: {new_data['error']}"
-                    logger.debug(f"Ошибка повторилась для main_url: {url}")
-    
-    # Обновляем filtered_urls
-    for url, locations in failed_urls['filtered_urls'].items():
-        new_data = parsed_data.get(url)
-        if new_data:
-            for loc in locations:
-                sid = loc['spreadsheet_id']
-                murl = loc['main_url']
-                qidx = loc['query_idx']
-                
-                # Находим и обновляем элемент в filtered_urls
-                filtered_list = result_data[sid]['urls'][murl]['queries'][qidx]['filtered_urls']
-                for item in filtered_list:
-                    if isinstance(item, dict) and item.get('url') == url:
-                        if 'error' not in new_data:
-                            # Дополнительная проверка длины HTML перед записью
-                            html_length = len(new_data.get('html_structure', ''))
-                            if html_length < min_html_length:
-                                logger.warning(f"HTML слишком короткий для записи ({html_length} < {min_html_length}): {url}")
-                                item['error'] = f"Browser: HTML too short ({html_length} < {min_html_length})"
-                            else:
-                                # Успех - добавляем HTML и удаляем ошибку
-                                item['html_structure'] = new_data['html_structure']
-                                item.pop('error', None)
-                                filtered_urls_fixed += 1
-                                logger.debug(f"Исправлен filtered_url: {url}")
+    # Обновляем main_urls (ТОЛЬКО если флаг включен)
+    if reparse_main_urls:
+        logger.info("  Обновление main_urls...")
+        for url, locations in failed_urls['main_urls'].items():
+            new_data = parsed_data.get(url)
+            if new_data:
+                for loc in locations:
+                    sid = loc['spreadsheet_id']
+                    murl = loc['main_url']
+                    
+                    if 'error' not in new_data:
+                        # Дополнительная проверка длины HTML перед записью
+                        html_length = len(new_data.get('html_structure', ''))
+                        if html_length < min_html_length:
+                            logger.warning(f"HTML слишком короткий для записи ({html_length} < {min_html_length}): {url}")
+                            result_data[sid]['urls'][murl]['parsing_error'] = f"Browser: HTML too short ({html_length} < {min_html_length})"
                         else:
-                            # Снова ошибка - обновляем текст ошибки
-                            item['error'] = f"Browser: {new_data['error']}"
-                            logger.debug(f"Ошибка повторилась для filtered_url: {url}")
-                        break
+                            # Успех - добавляем HTML и удаляем ошибку
+                            result_data[sid]['urls'][murl]['html_structure'] = new_data['html_structure']
+                            result_data[sid]['urls'][murl].pop('parsing_error', None)
+                            main_urls_fixed += 1
+                            logger.debug(f"Исправлен main_url: {url}")
+                    else:
+                        # Снова ошибка - обновляем текст ошибки
+                        result_data[sid]['urls'][murl]['parsing_error'] = f"Browser: {new_data['error']}"
+                        logger.debug(f"Ошибка повторилась для main_url: {url}")
+    
+    # Обновляем filtered_urls (ТОЛЬКО если флаг включен)
+    if reparse_filtered_urls:
+        logger.info("  Обновление filtered_urls...")
+        for url, locations in failed_urls['filtered_urls'].items():
+            new_data = parsed_data.get(url)
+            if new_data:
+                for loc in locations:
+                    sid = loc['spreadsheet_id']
+                    murl = loc['main_url']
+                    qidx = loc['query_idx']
+                    
+                    # Находим и обновляем элемент в filtered_urls
+                    filtered_list = result_data[sid]['urls'][murl]['queries'][qidx]['filtered_urls']
+                    for item in filtered_list:
+                        if isinstance(item, dict) and item.get('url') == url:
+                            if 'error' not in new_data:
+                                # Дополнительная проверка длины HTML перед записью
+                                html_length = len(new_data.get('html_structure', ''))
+                                if html_length < min_html_length:
+                                    logger.warning(f"HTML слишком короткий для записи ({html_length} < {min_html_length}): {url}")
+                                    item['error'] = f"Browser: HTML too short ({html_length} < {min_html_length})"
+                                else:
+                                    # Успех - добавляем HTML и удаляем ошибку
+                                    item['html_structure'] = new_data['html_structure']
+                                    item.pop('error', None)
+                                    filtered_urls_fixed += 1
+                                    logger.debug(f"Исправлен filtered_url: {url}")
+                            else:
+                                # Снова ошибка - обновляем текст ошибки
+                                item['error'] = f"Browser: {new_data['error']}"
+                                logger.debug(f"Ошибка повторилась для filtered_url: {url}")
+                            break
     
     logger.info(f"Обновлено записей:")
     logger.info(f"  - Main URLs: {main_urls_fixed}")
@@ -515,7 +553,9 @@ if __name__ == "__main__":
             min_html_length=2000,      # Минимальная длина HTML в символах
             device_type="desktop",     # Тип устройства для эмуляции
             visible=True,              # Видимый режим (headless детектируется)
-            skip_problematic=False     # НЕ пропускаем
+            skip_problematic=False,    # НЕ пропускаем
+            reparse_main_urls=True,    # Парсить main_urls (для теста)
+            reparse_filtered_urls=False  # Парсить filtered_urls (для теста)
         )
         
         # Сохраняем результаты

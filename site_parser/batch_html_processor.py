@@ -23,7 +23,9 @@ async def parse_url_with_retry(
     client: httpx.AsyncClient,
     semaphore: asyncio.Semaphore,
     max_retries: int = 3,
-    min_html_length: int = 100
+    min_html_length: int = 100,
+    url_index: int = 0,
+    total_urls: int = 0
 ) -> Dict:
     """
     Парсит URL с повторными попытками при ошибках
@@ -41,7 +43,8 @@ async def parse_url_with_retry(
     async with semaphore:
         for attempt in range(max_retries):
             try:
-                logger.info(f"[{attempt + 1}/{max_retries}] Парсинг: {url}")
+                progress = f"[{url_index}/{total_urls}]" if total_urls > 0 else ""
+                logger.info(f"{progress} [{attempt + 1}/{max_retries}] Парсинг: {url}")
                 
                 # Парсим страницу
                 parse_result = await parse_for_ml(url, client, min_html_length=min_html_length)
@@ -185,8 +188,9 @@ async def parse_filtered_urls_batch(
         # Парсим все URL с контролем домена
         domain_last_request = {}
         tasks = []
+        total_urls = len(all_urls_to_parse)
         
-        for url in all_urls_to_parse:
+        for idx, url in enumerate(all_urls_to_parse, 1):
             # Извлекаем домен
             from urllib.parse import urlparse
             domain = urlparse(url).netloc
@@ -197,8 +201,8 @@ async def parse_filtered_urls_batch(
                 if time_since_last < domain_pause:
                     await asyncio.sleep(domain_pause - time_since_last)
             
-            # Запускаем задачу
-            task = parse_url_with_retry(url, client, semaphore, max_retries, min_html_length)
+            # Запускаем задачу с индексом
+            task = parse_url_with_retry(url, client, semaphore, max_retries, min_html_length, idx, total_urls)
             tasks.append((url, task))
             
             # Обновляем время последнего запроса к домену

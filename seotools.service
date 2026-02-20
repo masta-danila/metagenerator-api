@@ -1,17 +1,34 @@
 [Unit]
-Description=SEO Tools Meta Generator Service
+Description=SEO Tools Parser with Xvfb
 After=network.target
-Wants=network.target
 
 [Service]
 Type=simple
-User=callchecker
-Group=callchecker
-WorkingDirectory=/home/callchecker/seotools
-Environment=PATH=/home/callchecker/seotools/venv/bin:/usr/local/bin:/usr/bin:/bin
-ExecStart=/home/callchecker/seotools/venv/bin/python main.py
-Restart=always
+User=YOUR_USERNAME
+Group=YOUR_USERNAME
+WorkingDirectory=/path/to/seotools
+Environment="PATH=/path/to/seotools/venv/bin:/usr/local/bin:/usr/bin:/bin"
+Environment="PYTHONUNBUFFERED=1"
+
+# Запуск через bash скрипт с Xvfb
+ExecStart=/bin/bash /path/to/seotools/start_with_xvfb.sh
+
+# Автоматический перезапуск при падении
+Restart=on-failure
 RestartSec=10
+
+# Ограничения ресурсов (опционально)
+# MemoryLimit=4G
+# CPUQuota=200%
+
+# Логирование
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=seotools
+
+# Тайм-аут для запуска и остановки
+TimeoutStartSec=60
+TimeoutStopSec=30
 
 [Install]
 WantedBy=multi-user.target

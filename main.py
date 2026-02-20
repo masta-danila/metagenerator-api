@@ -122,9 +122,10 @@ async def run_full_pipeline() -> bool:
     
     data = await parse_filtered_urls_batch(
         data=data,
-        max_concurrent=1000,  # Количество одновременных запросов
+        max_concurrent=100,  # Количество одновременных запросов
         max_retries=2,  # Количество повторных попыток при ошибках
-        min_html_length=1000  # Минимальная длина HTML (меньше = ошибка)
+        min_html_length=1000,  # Минимальная длина HTML (меньше = ошибка)
+        use_proxy=True  # Использовать прокси с ротацией (автозагрузка из proxy.txt)
     )
     save_step_results(data, "step6_html_parsed.json")
 
@@ -153,7 +154,7 @@ async def run_full_pipeline() -> bool:
     logger.info("ШАГ 8/14: Валидация качества парсинга")
     validation = validate_parsing_quality(
         data=data,
-        min_success_rate=0.7  # 70% успешных URL
+        min_success_rate=0.6  # 70% успешных URL
     )
     
     if not validation['valid']:

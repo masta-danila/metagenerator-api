@@ -147,15 +147,20 @@ class ProxyManager:
             proxy: Словарь с данными прокси (ip, port, username, password, protocol)
         
         Returns:
-            str: Proxy URL в формате protocol://username:password@ip:port
+            str: Proxy URL в формате protocol://ip:port или protocol://username:password@ip:port
         """
         protocol = proxy.get('protocol', 'http')
-        username = proxy['username']
-        password = proxy['password']
         ip = proxy['ip']
         port = proxy['port']
+        username = proxy.get('username')
+        password = proxy.get('password')
         
-        return f"{protocol}://{username}:{password}@{ip}:{port}"
+        # Если есть авторизация - добавляем username:password@
+        if username and password:
+            return f"{protocol}://{username}:{password}@{ip}:{port}"
+        else:
+            # Прокси без авторизации
+            return f"{protocol}://{ip}:{port}"
     
     def configure_seleniumwire_proxy(self, proxy: Dict) -> Tuple[Options, Optional[Dict]]:
         """

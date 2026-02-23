@@ -169,7 +169,7 @@ async def run_full_pipeline() -> bool:
     save_step_results(data, "step9_meta_extracted.json")
     
     # Шаг 10: Классификация страниц через LLM
-    ENABLE_CLASSIFICATION = True  # Флаг: измените на False чтобы пропустить этот шаг
+    ENABLE_CLASSIFICATION = False  # Флаг: измените на False чтобы пропустить этот шаг
     
     if ENABLE_CLASSIFICATION:
         logger.info("ШАГ 10/14: Классификация страниц через LLM")

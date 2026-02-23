@@ -2,13 +2,19 @@
 Модуль для получения HTML через браузер - на основе debug_vseinstrumenti.py + прокси
 """
 import time
+import random
 import ssl
 import sys
 import logging
+import threading
 from typing import Optional
 from pathlib import Path
 
 import undetected_chromedriver as uc
+
+# Глобальная блокировка для последовательного запуска браузеров
+# Предотвращает race condition при патчинге ChromeDriver
+_browser_start_lock = threading.Lock()
 
 # Импортируем решатель антибот защит и клинер HTML
 try:
@@ -80,29 +86,43 @@ class BrowserFetcher:
                     logger.warning(f"ВНИМАНИЕ: Прокси {proxy_str} требует авторизацию, но undetected-chromedriver её НЕ поддерживает!")
                     logger.warning("Работаем БЕЗ прокси. Используйте прокси без авторизации (формат IP:PORT)")
                     # НЕ используем прокси с авторизацией
-                    self.driver = uc.Chrome(
-                        options=options,
-                        version_main=None,
-                        headless=not self.visible
-                    )
+                    # Lock для предотвращения race condition при параллельном запуске
+                    with _browser_start_lock:
+                        logger.debug("Ожидание блокировки для запуска браузера...")
+                        self.driver = uc.Chrome(
+                            options=options,
+                            version_main=None,
+                            headless=not self.visible
+                        )
+                        # Пауза после запуска для стабильности
+                        time.sleep(2)
                 else:
                     # Прокси БЕЗ авторизации - простой --proxy-server
                     options.add_argument(f"--proxy-server={proxy_str}")
                     logger.info(f"Используем прокси: {proxy_str}")
                     
-                    # Используем undetected-chromedriver
+                    # Lock для предотвращения race condition при параллельном запуске
+                    with _browser_start_lock:
+                        logger.debug("Ожидание блокировки для запуска браузера...")
+                        self.driver = uc.Chrome(
+                            options=options,
+                            version_main=None,
+                            headless=not self.visible
+                        )
+                        # Пауза после запуска для стабильности
+                        time.sleep(2)
+            else:
+                # БЕЗ прокси - чистый undetected-chromedriver
+                # Lock для предотвращения race condition при параллельном запуске
+                with _browser_start_lock:
+                    logger.debug("Ожидание блокировки для запуска браузера...")
                     self.driver = uc.Chrome(
                         options=options,
                         version_main=None,
                         headless=not self.visible
                     )
-            else:
-                # БЕЗ прокси - чистый undetected-chromedriver
-                self.driver = uc.Chrome(
-                    options=options,
-                    version_main=None,
-                    headless=not self.visible
-                )
+                    # Пауза после запуска для стабильности
+                    time.sleep(2)
             
             logger.info("Браузер успешно запущен")
             return True

@@ -310,12 +310,21 @@ def reparse_failed_urls_with_browser(
         logger.info(f"  ... и еще {len(all_failed_urls) - 5} URL")
     
     # Шаг 3: Создаем батчи для параллельной обработки
+    # Распределяем URL равномерно по ровно max_concurrent потокам
+    num_batches = min(max_concurrent, len(all_failed_urls))
+    batch_size = (len(all_failed_urls) + num_batches - 1) // num_batches  # округление вверх
+    
     def chunks(lst, n):
         """Разделить список на батчи по n элементов"""
         for i in range(0, len(lst), n):
             yield lst[i:i + n]
     
-    url_batches = list(chunks(all_failed_urls, max(1, len(all_failed_urls) // max_concurrent)))
+    url_batches = list(chunks(all_failed_urls, batch_size))
+    
+    # Гарантируем что батчей не больше max_concurrent
+    if len(url_batches) > max_concurrent:
+        # Перераспределяем если получилось больше
+        url_batches = [all_failed_urls[i::max_concurrent] for i in range(max_concurrent)]
     
     # Шаг 4: Запускаем повторный парсинг через браузер с многопоточностью
     logger.info(f"[ШАГ 3] Запуск повторного парсинга через Selenium (потоков: {len(url_batches)})...")
@@ -545,7 +554,7 @@ if __name__ == "__main__":
         # Запускаем повторный парсинг через браузер
         results = reparse_failed_urls_with_browser(
             data=data,
-            max_concurrent=10,         # 10 браузеров параллельно
+            max_concurrent=1,          # 3 браузера параллельно (с Lock)
             max_retries=2,             # 2 попытки на каждый URL
             wait_time=5,               # 5 сек ожидания после загрузки
             use_proxy=use_proxy,       # Используем прокси если есть proxy.txt
@@ -554,8 +563,8 @@ if __name__ == "__main__":
             device_type="desktop",     # Тип устройства для эмуляции
             visible=True,              # Видимый режим (headless детектируется)
             skip_problematic=False,    # НЕ пропускаем
-            reparse_main_urls=True,    # Парсить main_urls (для теста)
-            reparse_filtered_urls=False  # Парсить filtered_urls (для теста)
+            reparse_main_urls=False,   # Парсить main_urls (для теста)
+            reparse_filtered_urls=True  # Парсить filtered_urls (для теста)
         )
         
         # Сохраняем результаты

@@ -4,22 +4,18 @@ After=network.target
 
 [Service]
 Type=simple
-User=YOUR_USERNAME
-Group=YOUR_USERNAME
-WorkingDirectory=/path/to/seotools
-Environment="PATH=/path/to/seotools/venv/bin:/usr/local/bin:/usr/bin:/bin"
+User=callchecker
+Group=callchecker
+WorkingDirectory=/home/callchecker/seotools
+Environment="PATH=/home/callchecker/seotools/venv/bin:/usr/local/bin:/usr/bin:/bin"
 Environment="PYTHONUNBUFFERED=1"
 
 # Запуск через bash скрипт с Xvfb
-ExecStart=/bin/bash /path/to/seotools/start_with_xvfb.sh
+ExecStart=/bin/bash /home/callchecker/seotools/start_with_xvfb.sh
 
 # Автоматический перезапуск при падении
 Restart=on-failure
 RestartSec=10
-
-# Ограничения ресурсов (опционально)
-# MemoryLimit=4G
-# CPUQuota=200%
 
 # Логирование
 StandardOutput=journal

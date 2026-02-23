@@ -109,7 +109,7 @@ async def run_full_pipeline() -> bool:
         max_retries=3,  # Количество повторных попыток при ошибках API
         retry_delay=5  # Задержка между повторными попытками в секундах
     )
-    # save_step_results(data, "step5_filtered_urls.json")
+    save_step_results(data, "step5_filtered_urls.json")
     
     # Шаг 6: Парсинг HTML filtered_urls (httpx)
     logger.info("ШАГ 6/14: Парсинг HTML filtered_urls (httpx)")
@@ -166,10 +166,10 @@ async def run_full_pipeline() -> bool:
     # Шаг 9: Извлечение метатегов из HTML
     logger.info("ШАГ 9/14: Извлечение метатегов из HTML (title, description, h1)")
     data = extract_meta_from_filtered_urls(data)
-    # save_step_results(data, "step9_meta_extracted.json")
+    save_step_results(data, "step9_meta_extracted.json")
     
     # Шаг 10: Классификация страниц через LLM
-    ENABLE_CLASSIFICATION = False  # Флаг: измените на False чтобы пропустить этот шаг
+    ENABLE_CLASSIFICATION = True  # Флаг: измените на False чтобы пропустить этот шаг
     
     if ENABLE_CLASSIFICATION:
         logger.info("ШАГ 10/14: Классификация страниц через LLM")
@@ -180,7 +180,7 @@ async def run_full_pipeline() -> bool:
             max_retries=3,  # Повторные попытки при ошибках
             max_urls_per_type=4  # Максимум URL каждого типа для классификации
         )
-        # save_step_results(data, "step10_classified.json")
+        save_step_results(data, "step10_classified.json")
     else:
         logger.info("ШАГ 10/14: Классификация страниц [ПРОПУЩЕНА]")
     
@@ -193,7 +193,7 @@ async def run_full_pipeline() -> bool:
         description_min_frequency_percent=0.75,  # Description: 25%
         max_competitors=4  # Максимум 5 конкурентов для анализа
     )
-    # save_step_results(data, "step11_lemmatized.json")
+    save_step_results(data, "step11_lemmatized.json")
     
     # Шаг 12: Генерация метатегов через LLM
     logger.info("ШАГ 12/14: Генерация метатегов через LLM")
@@ -209,7 +209,7 @@ async def run_full_pipeline() -> bool:
         use_main_query_in_title=True,  # Использовать основной запрос в Title
         use_main_query_in_description=True  # Использовать основной запрос в Description
     )
-    # save_step_results(data, "step12_generated_metatags.json")
+    save_step_results(data, "step12_generated_metatags.json")
     
     # Шаг 13: Проверка и исправление метатегов через LLM
     ENABLE_METATAG_EDITOR = False  # Флаг: измените на True чтобы включить этот шаг

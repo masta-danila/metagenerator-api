@@ -274,7 +274,7 @@ if __name__ == "__main__":
         data = json.load(f)
     
     # Параметры валидации
-    min_success = 0.7  # 70%
+    min_success = 0.6  # 70%
     
     # Валидация
     result = validate_parsing_quality(

@@ -36,3 +36,10 @@ jsontests/
 # Proxy configs (sensitive data)
 **/proxy.txt
 site_parser/proxy.txt
+
+# Celery
+celerybeat-schedule
+celerybeat.pid
+
+# Redis
+dump.rdb

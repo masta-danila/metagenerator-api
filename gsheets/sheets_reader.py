@@ -307,9 +307,12 @@ def get_all_data_urls(worksheet, meta_status: Dict[str, bool]) -> Dict[str, Dict
     return result
 
 
-def process_all_spreadsheets() -> Dict:
+def process_specific_spreadsheets(spreadsheet_ids: List[str]) -> Dict:
     """
-    Обрабатывает все таблицы из spreadsheets.json
+    Обрабатывает только указанные таблицы
+    
+    Args:
+        spreadsheet_ids: Список ID таблиц для обработки
     
     Логика:
     - Получает статус всех URL из листа "Meta"
@@ -318,15 +321,12 @@ def process_all_spreadsheets() -> Dict:
       * присутствуют в Meta, но имеют незаполненные поля (h1, title, description)
     
     Returns:
-        Dict: Словарь с данными для всех таблиц
+        Dict: Словарь с данными для указанных таблиц
     """
-    # Загружаем ID таблиц
-    spreadsheet_ids = load_spreadsheet_ids()
-    
     # Создаем клиент
     client = get_sheets_client()
     
-    # Результат для всех таблиц
+    # Результат для указанных таблиц
     all_data = {}
     
     for spreadsheet_id in spreadsheet_ids:
@@ -357,28 +357,38 @@ def process_all_spreadsheets() -> Dict:
             # Получаем данные для всех URL из Data, фильтруя по статусу Meta
             input_data = get_all_data_urls(input_sheet, meta_status)
             
-            # Считаем сколько URL отсутствуют в Meta и сколько с незаполненными полями
-            missing_in_meta = sum(1 for url in input_data.keys() if url not in meta_status)
-            incomplete_in_meta = sum(1 for url in input_data.keys() if url in meta_status and not meta_status[url])
-            
-            logger.info(f"  URL для обработки: {len(input_data)}")
-            logger.info(f"    - отсутствуют в Meta: {missing_in_meta}")
-            logger.info(f"    - есть в Meta, но не заполнены: {incomplete_in_meta}")
-            
-            if not input_data:
-                logger.info(f"  ✓ Нет URL для обработки")
-                continue
-            
-            # Сохраняем данные для этой таблицы
-            all_data[spreadsheet_id] = {
-                "urls": input_data
-            }
-            
+            if input_data['urls']:
+                all_data[spreadsheet_id] = input_data
+                logger.info(f"  ✓ Загружено {len(input_data['urls'])} URL")
+            else:
+                logger.warning(f"  ⚠ Нет URL для обработки")
+                
         except Exception as e:
-            logger.error(f"  ✗ Ошибка при обработке таблицы {spreadsheet_id}: {e}", exc_info=True)
+            logger.error(f"  ✗ Ошибка обработки таблицы {spreadsheet_id}: {e}")
             continue
     
+    logger.info(f"Всего загружено таблиц: {len(all_data)}")
     return all_data
+
+
+def process_all_spreadsheets() -> Dict:
+    """
+    Обрабатывает все таблицы из spreadsheets.json
+    
+    Логика:
+    - Получает статус всех URL из листа "Meta"
+    - Берет все URL из листа "Data", которые:
+      * отсутствуют в Meta, ИЛИ
+      * присутствуют в Meta, но имеют незаполненные поля (h1, title, description)
+    
+    Returns:
+        Dict: Словарь с данными для всех таблиц
+    """
+    # Загружаем ID таблиц
+    spreadsheet_ids = load_spreadsheet_ids()
+    
+    # Используем новую функцию
+    return process_specific_spreadsheets(spreadsheet_ids)
 
 
 def save_to_json(data: Dict, filename: str = "jsontests/step4_sheets_data_updated.json") -> None:

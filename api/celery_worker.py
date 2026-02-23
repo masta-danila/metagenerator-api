@@ -12,7 +12,7 @@ sys.path.insert(0, str(project_root))
 sys.path.insert(0, str(project_root / "gsheets"))
 
 from api.celery_config import celery_app
-from gsheets.sheets_reader import process_all_spreadsheets  # type: ignore
+from gsheets.sheets_reader import process_specific_spreadsheets  # type: ignore
 from gsheets.data_updater import update_all_data_sheets  # type: ignore
 from gsheets.sheets_updater import update_all_spreadsheets  # type: ignore
 from metagenerator_pipeline import run_metagenerator_pipeline
@@ -50,17 +50,16 @@ def process_spreadsheets_task(
             meta={'progress': 'MAIN: ШАГ 1/4: Чтение данных из Google Sheets'}
         )
         
-        # Шаг 1: Чтение Google Sheets
+        # Шаг 1: Чтение конкретных Google Sheets (только запрошенные таблицы)
         logger.info(f"[TASK {task_id}] MAIN: ШАГ 1/4: Чтение данных из Google Sheets")
-        data = process_all_spreadsheets()
+        logger.info(f"[TASK {task_id}] Запрошено таблиц: {len(spreadsheet_ids)}")
         
-        # Фильтруем данные только по запрошенным таблицам
-        data = {sid: data[sid] for sid in spreadsheet_ids if sid in data}
+        data = process_specific_spreadsheets(spreadsheet_ids)
         
         if not data:
-            raise ValueError(f"Ни одна из таблиц {spreadsheet_ids} не найдена")
+            raise ValueError(f"Ни одна из таблиц {spreadsheet_ids} не найдена или не содержит URL для обработки")
         
-        logger.info(f"[TASK {task_id}] Загружено {len(data)} таблиц")
+        logger.info(f"[TASK {task_id}] Загружено {len(data)} таблиц с данными")
         
         # Обновляем статус: "Основная обработка"
         self.update_state(

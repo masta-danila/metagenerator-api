@@ -34,6 +34,7 @@ class Settings(BaseSettings):
     class Config:
         env_file = ".env"
         env_file_encoding = "utf-8"
+        extra = "ignore"  # Игнорировать неизвестные переменные из .env
     
     def get_valid_api_keys(self) -> set[str]:
         """Возвращает множество валидных API ключей"""

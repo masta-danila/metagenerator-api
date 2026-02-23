@@ -328,8 +328,16 @@ async def process_sheets_data(
         urls_dict = spreadsheet_info.get('urls', {})
         for url, url_data in urls_dict.items():
             queries = url_data.get('queries', [])
-            # Ограничиваем количество запросов для обработки
-            queries = queries[:queries_per_url]
+            
+            # Сортируем запросы по частотности (от большего к меньшему)
+            queries_sorted = sorted(
+                queries,
+                key=lambda q: q.get('frequency', 0) if isinstance(q, dict) else 0,
+                reverse=True
+            )
+            
+            # Берем только самые частотные запросы
+            queries = queries_sorted[:queries_per_url]
             region = url_data.get('region', default_region)
             url_regions[url] = region
             

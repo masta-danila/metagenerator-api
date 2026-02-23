@@ -1,21 +1,20 @@
 """
 Полный цикл генерации метатегов из Google Sheets
 
-Выполняет 14 последовательных шагов:
+Выполняет 13 последовательных шагов:
 1. Чтение данных из Google Sheets
-2. Получение частотности запросов через XMLRiver Wordstat API
-3. Обновление листа Data в Google Sheets частотностью
-4. Повторное чтение данных из Google Sheets (с обновленной частотностью)
-5. Получение filtered_urls через XMLRiver Yandex Search API
-6. Парсинг HTML filtered_urls (httpx)
-7. Повторный парсинг неудачных URL через браузер
-8. Валидация качества парсинга (при неудаче - повтор с шага 1)
-9. Извлечение метатегов из HTML
-10. Классификация страниц через LLM
-11. Лемматизация текстов конкурентов
-12. Генерация метатегов через LLM
-13. Проверка и исправление метатегов через LLM
-14. Загрузка результатов обратно в Google Sheets
+2. Получение частотности запросов через XMLRiver Wordstat API (данные остаются в памяти)
+3. Получение filtered_urls через XMLRiver Yandex Search API (используем самые частотные запросы)
+4. Парсинг HTML filtered_urls (httpx)
+5. Повторный парсинг неудачных URL через браузер
+6. Валидация качества парсинга (при неудаче - повтор с шага 1)
+7. Извлечение метатегов из HTML
+8. Классификация страниц через LLM
+9. Лемматизация текстов конкурентов
+10. Генерация метатегов через LLM
+11. Проверка и исправление метатегов через LLM
+12. Обновление листа Data в Google Sheets частотностью
+13. Обновление листа Meta в Google Sheets метатегами
 """
 
 import asyncio
@@ -69,33 +68,25 @@ async def run_full_pipeline() -> bool:
     logger.info("ЗАПУСК ПОЛНОГО ЦИКЛА ГЕНЕРАЦИИ МЕТАТЕГОВ")
     
     # Шаг 1: Чтение Google Sheets
-    logger.info("ШАГ 1/14: Чтение данных из Google Sheets")
+    logger.info("ШАГ 1/13: Чтение данных из Google Sheets")
     data = process_all_spreadsheets()
     # save_step_results(data, "step1_sheets_data.json")
     
     # Шаг 2: Получение частотности через XMLRiver Wordstat
-    logger.info("ШАГ 2/14: Получение частотности запросов через XMLRiver Wordstat API")
-    frequency_data = await process_sheets_data_wordstat(
+    logger.info("ШАГ 2/13: Получение частотности запросов через XMLRiver Wordstat API")
+    data = await process_sheets_data_wordstat(
         sheets_data=data,
         default_region=213,  # Москва
         device="",  # desktop, tablet, mobile
         max_concurrent=10,  # XMLRiver: до 10 одновременных запросов
         task_start_delay=0.0  # XMLRiver: прямые запросы, задержка не нужна
     )
-    # save_step_results(frequency_data, "step2_frequency_data.json")
+    save_step_results(data, "step2_frequency_data.json")
     
-    # Шаг 3: Обновление листа Data в Google Sheets
-    logger.info("ШАГ 3/14: Обновление листа Data в Google Sheets частотностью")
-    update_stats = update_all_data_sheets(frequency_data=frequency_data)
-    # save_step_results(update_stats, "step3_data_update_stats.json")
+    # Шаги 3-4 удалены: обновление Data листа перенесено в конец
     
-    # Шаг 4: Повторное чтение Google Sheets (с обновленной частотностью)
-    logger.info("ШАГ 4/14: Повторное чтение данных из Google Sheets")
-    data = process_all_spreadsheets()
-    # save_step_results(data, "step4_sheets_data_updated.json")
-    
-    # Шаг 5: Получение filtered_urls через XMLRiver Yandex Search
-    logger.info("ШАГ 5/14: Получение filtered_urls через XMLRiver Yandex Search API")
+    # Шаг 3: Получение filtered_urls через XMLRiver Yandex Search (используем самые частотные запросы)
+    logger.info("ШАГ 3/13: Получение filtered_urls через XMLRiver Yandex Search API")
     data = await process_sheets_data(
         sheets_data=data,
         default_region=213,  # Москва
@@ -109,10 +100,10 @@ async def run_full_pipeline() -> bool:
         max_retries=3,  # Количество повторных попыток при ошибках API
         retry_delay=5  # Задержка между повторными попытками в секундах
     )
-    save_step_results(data, "step5_filtered_urls.json")
+    save_step_results(data, "step3_filtered_urls.json")
     
-    # Шаг 6: Парсинг HTML filtered_urls (httpx)
-    logger.info("ШАГ 6/14: Парсинг HTML filtered_urls (httpx)")
+    # Шаг 4: Парсинг HTML filtered_urls (httpx)
+    logger.info("ШАГ 4/13: Парсинг HTML filtered_urls (httpx)")
     total_filtered = sum(
         len(url_data.get('filtered_urls', []))
         for sheet_info in data.values()
@@ -127,11 +118,11 @@ async def run_full_pipeline() -> bool:
         min_html_length=1000,  # Минимальная длина HTML (меньше = ошибка)
         use_proxy=True  # Использовать прокси с ротацией (автозагрузка из proxy.txt)
     )
-    save_step_results(data, "step6_html_parsed.json")
+    # save_step_results(data, "step6_html_parsed.json")
 
-    # Шаг 7: Повторный парсинг неудачных URL через браузер
+    # Шаг 5: Повторный парсинг неудачных URL через браузер
     # Управление через флаги reparse_main_urls и reparse_filtered_urls (оба False = пропуск этапа)
-    logger.info("ШАГ 7/14: Повторный парсинг неудачных URL через браузер")
+    logger.info("ШАГ 5/13: Повторный парсинг неудачных URL через браузер")
     try:
         data = reparse_failed_urls_with_browser(
             data=data,
@@ -150,8 +141,8 @@ async def run_full_pipeline() -> bool:
         logger.error(f"  ✗ Ошибка браузерного парсинга: {e}")
         logger.warning("  → Пропускаем этап браузерного парсинга, продолжаем с имеющимися данными")
     
-    # Шаг 8: Валидация качества парсинга
-    logger.info("ШАГ 8/14: Валидация качества парсинга")
+    # Шаг 6: Валидация качества парсинга
+    logger.info("ШАГ 6/13: Валидация качества парсинга")
     validation = validate_parsing_quality(
         data=data,
         min_success_rate=0.6  # 70% успешных URL
@@ -163,16 +154,16 @@ async def run_full_pipeline() -> bool:
     
     logger.info("  ✓ Валидация пройдена")
     
-    # Шаг 9: Извлечение метатегов из HTML
-    logger.info("ШАГ 9/14: Извлечение метатегов из HTML (title, description, h1)")
+    # Шаг 7: Извлечение метатегов из HTML
+    logger.info("ШАГ 7/13: Извлечение метатегов из HTML (title, description, h1)")
     data = extract_meta_from_filtered_urls(data)
-    save_step_results(data, "step9_meta_extracted.json")
+    #     save_step_results(data, "step7_meta_extracted.json")
     
-    # Шаг 10: Классификация страниц через LLM
+    # Шаг 8: Классификация страниц через LLM
     ENABLE_CLASSIFICATION = False  # Флаг: измените на False чтобы пропустить этот шаг
     
     if ENABLE_CLASSIFICATION:
-        logger.info("ШАГ 10/14: Классификация страниц через LLM")
+        logger.info("ШАГ 8/13: Классификация страниц через LLM")
         data = await classify_batch(
             data=data,
             model="grok-4-1-fast-non-reasoning",  # Модель для классификации
@@ -180,12 +171,12 @@ async def run_full_pipeline() -> bool:
             max_retries=3,  # Повторные попытки при ошибках
             max_urls_per_type=4  # Максимум URL каждого типа для классификации
         )
-        save_step_results(data, "step10_classified.json")
+        save_step_results(data, "step8_classified.json")
     else:
-        logger.info("ШАГ 10/14: Классификация страниц [ПРОПУЩЕНА]")
+        logger.info("ШАГ 8/13: Классификация страниц [ПРОПУЩЕНА]")
     
-    # Шаг 11: Лемматизация текстов конкурентов
-    logger.info("ШАГ 11/14: Лемматизация текстов конкурентов")
+    # Шаг 9: Лемматизация текстов конкурентов
+    logger.info("ШАГ 9/13: Лемматизация текстов конкурентов")
     data = process_urls_with_lemmatization(
         data=data,
         h1_min_frequency_percent=0.75,  # H1: 20%
@@ -193,10 +184,10 @@ async def run_full_pipeline() -> bool:
         description_min_frequency_percent=0.75,  # Description: 25%
         max_competitors=4  # Максимум 5 конкурентов для анализа
     )
-    save_step_results(data, "step11_lemmatized.json")
+    save_step_results(data, "step9_lemmatized.json")
     
-    # Шаг 12: Генерация метатегов через LLM
-    logger.info("ШАГ 12/14: Генерация метатегов через LLM")
+    # Шаг 10: Генерация метатегов через LLM
+    logger.info("ШАГ 10/13: Генерация метатегов через LLM")
     data = await generate_metatags_batch(
         data=data,
         model="claude-sonnet-4-5-20250929",
@@ -209,13 +200,13 @@ async def run_full_pipeline() -> bool:
         use_main_query_in_title=True,  # Использовать основной запрос в Title
         use_main_query_in_description=True  # Использовать основной запрос в Description
     )
-    save_step_results(data, "step12_generated_metatags.json")
+    #     save_step_results(data, "step10_generated_metatags.json")
     
-    # Шаг 13: Проверка и исправление метатегов через LLM
+    # Шаг 11: Проверка и исправление метатегов через LLM
     ENABLE_METATAG_EDITOR = False  # Флаг: измените на True чтобы включить этот шаг
     
     if ENABLE_METATAG_EDITOR:
-        logger.info("ШАГ 13/14: Проверка и исправление метатегов через LLM")
+        logger.info("ШАГ 11/13: Проверка и исправление метатегов через LLM")
         data = await review_metatags_batch(
             data=data,
             model="claude-sonnet-4-5-20250929",  # Модель для проверки метатегов
@@ -224,17 +215,22 @@ async def run_full_pipeline() -> bool:
             max_title_length=90,  # Максимум 90 символов для Title
             max_description_length=170  # Максимум 170 символов для Description
         )
-        # save_step_results(data, "step13_reviewed_metatags.json")
+        save_step_results(data, "step11_reviewed_metatags.json")
     else:
-        logger.info("ШАГ 13/14: Проверка и исправление метатегов [ПРОПУЩЕНА]")
+        logger.info("ШАГ 11/13: Проверка и исправление метатегов [ПРОПУЩЕНА]")
     
-    # Шаг 14: Загрузка результатов в Google Sheets
-    logger.info("ШАГ 14/14: Загрузка результатов в Google Sheets")
-    stats = update_all_spreadsheets(
+    # Шаг 12: Обновление листа Data в Google Sheets (частотность)
+    logger.info("ШАГ 12/13: Обновление листа Data в Google Sheets частотностью")
+    data_update_stats = update_all_data_sheets(frequency_data=data)
+    save_step_results(data_update_stats, "step12_data_update_stats.json")
+    
+    # Шаг 13: Обновление листа Meta в Google Sheets (метатеги)
+    logger.info("ШАГ 13/13: Обновление листа Meta в Google Sheets метатегами")
+    meta_update_stats = update_all_spreadsheets(
         data=data,
         sheet_name="Meta"
     )
-    # save_step_results(stats, "step14_meta_update_stats.json")
+    save_step_results(meta_update_stats, "step13_meta_update_stats.json")
     
     logger.info("ЦИКЛ ЗАВЕРШЕН УСПЕШНО")
     return True  # Pipeline выполнен успешно

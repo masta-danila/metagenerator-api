@@ -146,10 +146,10 @@ async def run_metagenerator_pipeline(
     Returns:
         Dict: Обработанные данные с метатегами и частотностью (очищенные от промежуточных данных)
     """
-    logger.info("ЗАПУСК METAGENERATOR PIPELINE (ШАГИ 2-11)")
+    logger.info("ЗАПУСК METAGENERATOR PIPELINE")
     
-    # Шаг 2: Получение частотности через XMLRiver Wordstat
-    logger.info("ШАГ 2/13: Получение частотности запросов через XMLRiver Wordstat API")
+    # Шаг 1: Получение частотности через XMLRiver Wordstat
+    logger.info("PIPELINE: ШАГ 1/10: Получение частотности запросов через XMLRiver Wordstat API")
     data = await process_sheets_data_wordstat(
         sheets_data=data,
         default_region=213,  # Москва
@@ -158,8 +158,8 @@ async def run_metagenerator_pipeline(
         task_start_delay=0.0  # XMLRiver: прямые запросы, задержка не нужна
     )
     
-    # Шаг 3: Получение filtered_urls через XMLRiver Yandex Search (используем самые частотные запросы)
-    logger.info("ШАГ 3/13: Получение filtered_urls через XMLRiver Yandex Search API")
+    # Шаг 2: Получение filtered_urls через XMLRiver Yandex Search (используем самые частотные запросы)
+    logger.info("PIPELINE: ШАГ 2/10: Получение filtered_urls через XMLRiver Yandex Search API")
     data = await process_sheets_data(
         sheets_data=data,
         default_region=213,  # Москва
@@ -174,8 +174,8 @@ async def run_metagenerator_pipeline(
         retry_delay=5  # Задержка между повторными попытками в секундах
     )
     
-    # Шаг 4: Парсинг HTML filtered_urls (httpx)
-    logger.info("ШАГ 4/13: Парсинг HTML filtered_urls (httpx)")
+    # Шаг 3: Парсинг HTML filtered_urls (httpx)
+    logger.info("PIPELINE: ШАГ 3/10: Парсинг HTML filtered_urls (httpx)")
     total_filtered = sum(
         len(url_data.get('filtered_urls', []))
         for sheet_info in data.values()
@@ -191,9 +191,9 @@ async def run_metagenerator_pipeline(
         use_proxy=True  # Использовать прокси с ротацией (автозагрузка из proxy.txt)
     )
     
-    # Шаг 5: Повторный парсинг неудачных URL через браузер
+    # Шаг 4: Повторный парсинг неудачных URL через браузер
     # Управление через флаги reparse_main_urls и reparse_filtered_urls (оба False = пропуск этапа)
-    logger.info("ШАГ 5/13: Повторный парсинг неудачных URL через браузер")
+    logger.info("PIPELINE: ШАГ 4/10: Повторный парсинг неудачных URL через браузер")
     try:
         data = reparse_failed_urls_with_browser(
             data=data,
@@ -211,8 +211,8 @@ async def run_metagenerator_pipeline(
         logger.error(f"  ✗ Ошибка браузерного парсинга: {e}")
         logger.warning("  → Пропускаем этап браузерного парсинга, продолжаем с имеющимися данными")
     
-    # Шаг 6: Валидация качества парсинга
-    logger.info("ШАГ 6/13: Валидация качества парсинга")
+    # Шаг 5: Валидация качества парсинга
+    logger.info("PIPELINE: ШАГ 5/10: Валидация качества парсинга")
     validation = validate_parsing_quality(
         data=data,
         min_success_rate=0.6  # 60% успешных URL
@@ -224,13 +224,13 @@ async def run_metagenerator_pipeline(
     
     logger.info("  ✓ Валидация пройдена")
     
-    # Шаг 7: Извлечение метатегов из HTML
-    logger.info("ШАГ 7/13: Извлечение метатегов из HTML (title, description, h1)")
+    # Шаг 6: Извлечение метатегов из HTML
+    logger.info("PIPELINE: ШАГ 6/10: Извлечение метатегов из HTML (title, description, h1)")
     data = extract_meta_from_filtered_urls(data)
     
-    # Шаг 8: Классификация страниц через LLM
+    # Шаг 7: Классификация страниц через LLM
     if enable_classification:
-        logger.info("ШАГ 8/13: Классификация страниц через LLM")
+        logger.info("PIPELINE: ШАГ 7/10: Классификация страниц через LLM")
         data = await classify_batch(
             data=data,
             model="grok-4-1-fast-non-reasoning",  # Модель для классификации
@@ -239,10 +239,10 @@ async def run_metagenerator_pipeline(
             max_urls_per_type=4  # Максимум URL каждого типа для классификации
         )
     else:
-        logger.info("ШАГ 8/13: Классификация страниц [ПРОПУЩЕНА]")
+        logger.info("PIPELINE: ШАГ 7/10: Классификация страниц [ПРОПУЩЕНА]")
     
-    # Шаг 9: Лемматизация текстов конкурентов
-    logger.info("ШАГ 9/13: Лемматизация текстов конкурентов")
+    # Шаг 8: Лемматизация текстов конкурентов
+    logger.info("PIPELINE: ШАГ 8/10: Лемматизация текстов конкурентов")
     data = process_urls_with_lemmatization(
         data=data,
         h1_min_frequency_percent=0.75,  # H1: 75%
@@ -251,8 +251,8 @@ async def run_metagenerator_pipeline(
         max_competitors=4  # Максимум 4 конкурента для анализа
     )
     
-    # Шаг 10: Генерация метатегов через LLM
-    logger.info("ШАГ 10/13: Генерация метатегов через LLM")
+    # Шаг 9: Генерация метатегов через LLM
+    logger.info("PIPELINE: ШАГ 9/10: Генерация метатегов через LLM")
     data = await generate_metatags_batch(
         data=data,
         model="claude-sonnet-4-5-20250929",
@@ -266,9 +266,9 @@ async def run_metagenerator_pipeline(
         use_main_query_in_description=True  # Использовать основной запрос в Description
     )
     
-    # Шаг 11: Проверка и исправление метатегов через LLM
+    # Шаг 10: Проверка и исправление метатегов через LLM
     if enable_metatag_editor:
-        logger.info("ШАГ 11/13: Проверка и исправление метатегов через LLM")
+        logger.info("PIPELINE: ШАГ 10/10: Проверка и исправление метатегов через LLM")
         data = await review_metatags_batch(
             data=data,
             model="claude-sonnet-4-5-20250929",  # Модель для проверки метатегов
@@ -278,7 +278,7 @@ async def run_metagenerator_pipeline(
             max_description_length=170  # Максимум 170 символов для Description
         )
     else:
-        logger.info("ШАГ 11/13: Проверка и исправление метатегов [ПРОПУЩЕНА]")
+        logger.info("PIPELINE: ШАГ 10/10: Проверка и исправление метатегов [ПРОПУЩЕНА]")
     
     # Очищаем данные от промежуточной информации
     data = cleanup_pipeline_data(data)

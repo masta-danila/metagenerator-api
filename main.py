@@ -1,20 +1,11 @@
 """
 Полный цикл генерации метатегов из Google Sheets
 
-Выполняет 13 последовательных шагов:
+Выполняет 4 основных шага:
 1. Чтение данных из Google Sheets
-2. Получение частотности запросов через XMLRiver Wordstat API (данные остаются в памяти)
-3. Получение filtered_urls через XMLRiver Yandex Search API (используем самые частотные запросы)
-4. Парсинг HTML filtered_urls (httpx)
-5. Повторный парсинг неудачных URL через браузер
-6. Валидация качества парсинга (при неудаче - повтор с шага 1)
-7. Извлечение метатегов из HTML
-8. Классификация страниц через LLM
-9. Лемматизация текстов конкурентов
-10. Генерация метатегов через LLM
-11. Проверка и исправление метатегов через LLM
-12. Обновление листа Data в Google Sheets частотностью
-13. Обновление листа Meta в Google Sheets метатегами
+2. Основная обработка через metagenerator_pipeline (10 внутренних шагов)
+3. Обновление листа Data в Google Sheets частотностью
+4. Обновление листа Meta в Google Sheets метатегами
 """
 
 import asyncio
@@ -59,12 +50,12 @@ async def run_full_pipeline() -> bool:
     logger.info("ЗАПУСК ПОЛНОГО ЦИКЛА ГЕНЕРАЦИИ МЕТАТЕГОВ")
     
     # Шаг 1: Чтение Google Sheets
-    logger.info("ШАГ 1/13: Чтение данных из Google Sheets")
+    logger.info("MAIN: ШАГ 1/4: Чтение данных из Google Sheets")
     data = process_all_spreadsheets()
     save_step_results(data, "step1_sheets_data.json")
     
-    # Шаги 2-11: Основная обработка данных через metagenerator_pipeline
-    logger.info("ЗАПУСК ОСНОВНОГО ПАЙПЛАЙНА ОБРАБОТКИ (ШАГИ 2-11)")
+    # Шаг 2: Основная обработка данных через metagenerator_pipeline
+    logger.info("MAIN: ШАГ 2/4: Основная обработка данных (metagenerator_pipeline)")
     try:
         data = await run_metagenerator_pipeline(
             data=data,
@@ -79,13 +70,13 @@ async def run_full_pipeline() -> bool:
         logger.error(f"  ✗ Ошибка в пайплайне: {e}")
         return False
     
-    # Шаг 12: Обновление листа Data в Google Sheets (частотность)
-    logger.info("ШАГ 12/13: Обновление листа Data в Google Sheets частотностью")
+    # Шаг 3: Обновление листа Data в Google Sheets (частотность)
+    logger.info("MAIN: ШАГ 3/4: Обновление листа Data в Google Sheets частотностью")
     data_update_stats = update_all_data_sheets(frequency_data=data)
     save_step_results(data_update_stats, "step12_data_update_stats.json")
     
-    # Шаг 13: Обновление листа Meta в Google Sheets (метатеги)
-    logger.info("ШАГ 13/13: Обновление листа Meta в Google Sheets метатегами")
+    # Шаг 4: Обновление листа Meta в Google Sheets (метатеги)
+    logger.info("MAIN: ШАГ 4/4: Обновление листа Meta в Google Sheets метатегами")
     meta_update_stats = update_all_spreadsheets(
         data=data,
         sheet_name="Meta"

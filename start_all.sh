@@ -57,7 +57,6 @@ nohup celery -A api.celery_worker worker \
     --loglevel=info \
     --concurrency=2 \
     --pool=solo \
-    --without-heartbeat \
     --pidfile=/tmp/metagenerator-api/celery.pid \
     > logs/celery.log 2>&1 &
 

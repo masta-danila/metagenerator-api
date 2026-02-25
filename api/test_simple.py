@@ -1,10 +1,11 @@
 """
 Простой smoke-test API (проверка что компоненты работают)
 """
+import os
 import requests
 
 API_URL = "http://localhost:8000"
-API_KEY = "7V%bbNhdyACGreVqbWrQHfCoWEc99**XVN1WMwZs6"
+API_KEY = os.getenv("TEST_API_KEY", "test-api-key-123")  # задать через TEST_API_KEY или .env
 
 print("SMOKE TEST API")
 print("=" * 60)

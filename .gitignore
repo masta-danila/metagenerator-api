@@ -45,3 +45,13 @@ celerybeat.pid
 
 # Redis
 dump.rdb
+
+# Внутренняя документация (не для публичного репо)
+RENAME_INSTRUCTIONS.md
+API_MIGRATION_SUMMARY.md
+debug_vseinstrumenti.py
+
+# Старые скрипты запуска
+start_with_xvfb.sh
+start_api.sh
+start_celery.sh

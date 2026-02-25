@@ -5,8 +5,10 @@ import requests
 import time
 import json
 
+import os
+
 API_URL = "http://localhost:8000"
-API_KEY = "7V%bbNhdyACGreVqbWrQHfCoWEc99**XVN1WMwZs6"  # Первый ключ из .env
+API_KEY = os.getenv("TEST_API_KEY", "test-api-key-123")  # задать через TEST_API_KEY или .env
 
 # Тестовые данные (2 URL)
 # Новая структура: {url: {данные}} без уровня таблиц

@@ -27,8 +27,10 @@ API_URL = "http://xmlriver.com/search_yandex/xml"
 
 def get_api_credentials() -> dict:
     """Получает API credentials из переменных окружения"""
-    user_id = os.getenv("XMLRIVER_USER_ID", "8834")
-    api_key = os.getenv("XMLRIVER_API_KEY", "e5a50999a40533aa928bb89be21e53c1ebd93ef2")
+    user_id = os.getenv("XMLRIVER_USER_ID")
+    api_key = os.getenv("XMLRIVER_API_KEY")
+    if not user_id or not api_key:
+        raise ValueError("XMLRIVER_USER_ID и XMLRIVER_API_KEY должны быть заданы в .env")
     return {"user": user_id, "key": api_key}
 
 

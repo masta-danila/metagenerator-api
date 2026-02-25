@@ -51,20 +51,34 @@ nohup uvicorn api.app:app \
 FASTAPI_PID=$!
 echo "✅ FastAPI запущен (PID: $FASTAPI_PID)"
 
+# Запустить Flower (мониторинг Celery) в фоне
+echo "🌸 Запуск Flower (мониторинг)..."
+nohup celery -A api.celery_worker flower \
+    --port=5555 \
+    --url_prefix=flower \
+    > logs/flower.log 2>&1 &
+
+FLOWER_PID=$!
+echo "✅ Flower запущен (PID: $FLOWER_PID)"
+
 # Сохранить PID'ы
 echo $CELERY_PID > /tmp/metagenerator-api/celery.pid
 echo $FASTAPI_PID > /tmp/metagenerator-api/fastapi.pid
+echo $FLOWER_PID > /tmp/metagenerator-api/flower.pid
 
 echo ""
 echo "✅ Все сервисы запущены!"
 echo "   Celery PID: $CELERY_PID"
 echo "   FastAPI PID: $FASTAPI_PID"
+echo "   Flower PID: $FLOWER_PID"
 echo ""
 echo "📖 API документация: http://localhost:8000/docs"
 echo "🔍 Health check: http://localhost:8000/health"
+echo "🌸 Flower мониторинг: http://localhost:5555"
 echo ""
 echo "📝 Логи:"
 echo "   Celery: tail -f logs/celery.log"
 echo "   FastAPI: tail -f logs/fastapi.log"
+echo "   Flower: tail -f logs/flower.log"
 echo ""
 echo "⏹️  Остановка: ./stop_all.sh"

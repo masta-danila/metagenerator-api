@@ -24,8 +24,18 @@ if [ -f /tmp/metagenerator-api/fastapi.pid ]; then
     rm /tmp/metagenerator-api/fastapi.pid
 fi
 
+if [ -f /tmp/metagenerator-api/flower.pid ]; then
+    FLOWER_PID=$(cat /tmp/metagenerator-api/flower.pid)
+    if kill -0 $FLOWER_PID 2>/dev/null; then
+        kill $FLOWER_PID
+        echo "✅ Flower остановлен (PID: $FLOWER_PID)"
+    fi
+    rm /tmp/metagenerator-api/flower.pid
+fi
+
 # Дополнительно убить по имени процесса (на всякий случай)
 pkill -f "celery.*worker" 2>/dev/null || true
 pkill -f "uvicorn.*api.app" 2>/dev/null || true
+pkill -f "celery.*flower" 2>/dev/null || true
 
 echo "✅ Все сервисы остановлены"

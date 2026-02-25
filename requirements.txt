@@ -39,4 +39,5 @@ celery[redis]==5.4.0
 redis==5.2.1
 python-multipart==0.0.19
 
-# Утилиты
+# Мониторинг Celery
+flower==2.0.1

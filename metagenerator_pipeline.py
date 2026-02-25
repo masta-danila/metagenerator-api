@@ -109,8 +109,7 @@ def cleanup_pipeline_data(data: Dict) -> Dict:
                 'metatag_editor_cost'
             ]
             for cost_field in cost_fields:
-                if cost_field in url_data:
-                    cleaned_url_data[cost_field] = url_data[cost_field]
+                cleaned_url_data[cost_field] = url_data.get(cost_field, {})
             
             # Копируем generated_metatags (главный результат!)
             if 'generated_metatags' in url_data:
@@ -186,7 +185,7 @@ async def run_metagenerator_pipeline(
     data = await parse_filtered_urls_batch(
         data=data,
         max_concurrent=100,  # Количество одновременных запросов
-        max_retries=2,  # Количество повторных попыток при ошибках
+        max_retries=3,  # Количество повторных попыток при ошибках
         min_html_length=1000,  # Минимальная длина HTML (меньше = ошибка)
         use_proxy=True  # Использовать прокси с ротацией (автозагрузка из proxy.txt)
     )

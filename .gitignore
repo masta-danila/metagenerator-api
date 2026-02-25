@@ -46,6 +46,9 @@ celerybeat.pid
 # Redis
 dump.rdb
 
+# Nginx конфиг с реальными IP (не для публичного репо)
+nginx.conf
+
 # Внутренняя документация (не для публичного репо)
 RENAME_INSTRUCTIONS.md
 API_MIGRATION_SUMMARY.md

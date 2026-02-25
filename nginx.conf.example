@@ -1,17 +1,19 @@
 # Nginx конфиг для Metagenerator API
 # Установка:
-#   sudo cp nginx.conf.example /etc/nginx/sites-available/metagenerator-api
+#   sudo cp nginx.conf /etc/nginx/sites-available/metagenerator-api
 #   sudo ln -s /etc/nginx/sites-available/metagenerator-api /etc/nginx/sites-enabled/
 #   sudo nginx -t && sudo systemctl reload nginx
+#
+# Реальный конфиг с IP: nginx.conf (не в git, создать вручную из этого шаблона)
 
 server {
     listen 80;
-    server_name 135.181.242.20;
+    server_name YOUR_SERVER_IP_OR_DOMAIN;
 
-    # Разрешённые IP
-    allow 147.45.255.191;
-    allow 31.130.152.33;
-    allow 176.213.59.235;
+    # Разрешённые IP (клиенты которым разрешён доступ к API)
+    allow ALLOWED_IP_1;
+    # allow ALLOWED_IP_2;
+    # allow ALLOWED_IP_3;
     deny all;
 
     location / {
@@ -31,14 +33,13 @@ server {
 # HTTPS (раскомментировать после certbot: certbot --nginx -d YOUR_DOMAIN)
 # server {
 #     listen 443 ssl;
-#     server_name 135.181.242.20;
+#     server_name YOUR_SERVER_IP_OR_DOMAIN;
 #
 #     ssl_certificate /etc/letsencrypt/live/YOUR_DOMAIN/fullchain.pem;
 #     ssl_certificate_key /etc/letsencrypt/live/YOUR_DOMAIN/privkey.pem;
 #
-#     allow 147.45.255.191;
-#     allow 31.130.152.33;
-#     allow 176.213.59.235;
+#     allow ALLOWED_IP_1;
+#     # allow ALLOWED_IP_2;
 #     deny all;
 #
 #     location / {

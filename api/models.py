@@ -7,22 +7,82 @@ from datetime import datetime
 
 
 class TaskRequest(BaseModel):
-    """Запрос на создание задачи обработки данных через metagenerator_pipeline"""
+    """
+    Запрос на создание задачи обработки данных через metagenerator_pipeline
+    
+    Структура поля data:
+    {
+        "URL страницы": {
+            "queries": [{"query": "текст запроса"}, ...],  # Список поисковых запросов
+            "company_name": "Название компании",            # Название компании для контекста
+            "region": 213,                                  # ID региона Яндекса (213 = Москва)
+            "variables_h1": [],                             # Переменные для H1 (опционально)
+            "variables_title": [],                          # Переменные для Title (опционально)
+            "variables_description": []                     # Переменные для Description (опционально)
+        }
+    }
+    """
     
     data: Dict[str, Any] = Field(
         ...,
-        description="Словарь с URL и их данными (структура: {url: {queries, company_name, region, ...}})"
+        description="Словарь URL -> данные страницы (queries, company_name, region, variables)",
+        json_schema_extra={
+            "example": {
+                "https://example.com/": {
+                    "queries": [
+                        {"query": "купить товар"},
+                        {"query": "товар цена"}
+                    ],
+                    "company_name": "Моя Компания",
+                    "region": 213,
+                    "variables_h1": [],
+                    "variables_title": [],
+                    "variables_description": []
+                },
+                "https://example.com/services/": {
+                    "queries": [
+                        {"query": "услуги компании"}
+                    ],
+                    "company_name": "Моя Компания",
+                    "region": 213,
+                    "variables_h1": [],
+                    "variables_title": [],
+                    "variables_description": []
+                }
+            }
+        }
     )
     
     enable_classification: bool = Field(
         default=False,
-        description="Включить классификацию страниц через LLM (pipeline шаг 7)"
+        description="Включить классификацию страниц через LLM (определение типа: коммерческая/информационная)"
     )
     
     enable_metatag_editor: bool = Field(
         default=False,
-        description="Включить проверку и исправление метатегов через LLM (pipeline шаг 10)"
+        description="Включить проверку и исправление метатегов через LLM после генерации"
     )
+    
+    class Config:
+        json_schema_extra = {
+            "example": {
+                "data": {
+                    "https://example.com/": {
+                        "queries": [
+                            {"query": "купить товар"},
+                            {"query": "товар цена"}
+                        ],
+                        "company_name": "Моя Компания",
+                        "region": 213,
+                        "variables_h1": [],
+                        "variables_title": [],
+                        "variables_description": []
+                    }
+                },
+                "enable_classification": True,
+                "enable_metatag_editor": True
+            }
+        }
 
 
 class TaskResponse(BaseModel):
@@ -94,7 +154,39 @@ class TaskStatus(BaseModel):
     
     result: Optional[Dict[str, Any]] = Field(
         default=None,
-        description="Результат выполнения (только для completed)"
+        description="Результат выполнения (только для completed)",
+        json_schema_extra={
+            "example": {
+                "status": "completed",
+                "data": {
+                    "https://example.com/": {
+                        "generated_metatags": {
+                            "h1": "Купить товар - Моя Компания",
+                            "title": "Купить товар по выгодной цене | Моя Компания",
+                            "description": "Купить товар от Моя Компания. Лучшие цены и качество."
+                        },
+                        "classification": {
+                            "page_type": "commercial",
+                            "confidence": 0.95
+                        },
+                        "wordstat_cost": {
+                            "total_rub": 0.05,
+                            "api_requests": 2
+                        },
+                        "yandex_search_cost": {
+                            "total_rub": 0.10,
+                            "queries": 2
+                        },
+                        "metageneration_cost": {
+                            "total_rub": 0.30,
+                            "tokens": 1500
+                        }
+                    }
+                },
+                "completed_at": "2026-02-24T15:30:00",
+                "urls_processed": 1
+            }
+        }
     )
     
     error: Optional[str] = Field(

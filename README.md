@@ -1,81 +1,142 @@
-# SEO Tools - Автоматическая генерация метатегов
+# Metagenerator API - REST API для генерации SEO метатегов
 
-Система автоматической генерации H1, Title и Description для сайтов на основе анализа конкурентов и LLM.
+REST API сервис для автоматической генерации H1, Title и Description на основе анализа конкурентов и LLM.
 
-## Возможности
+## 🎯 Назначение
 
-- 📊 Чтение данных из Google Sheets
+**Это API-сервер**, который:
+- Принимает на вход данные о URL и поисковых запросах
+- Выполняет полный цикл обработки (10 шагов)
+- Возвращает готовые метатеги и аналитику
+
+**Не включает:**
+- Чтение/запись Google Sheets (делает клиент)
+- Scheduling и автоматизацию (делает клиент)
+
+## 🏗️ Архитектура
+
+```
+┌─────────────┐                    ┌──────────────────┐
+│   Клиент    │ ──── HTTP ────────>│ Metagenerator    │
+│  (seotools) │                    │      API         │
+│             │                    │                  │
+│ - Читает    │                    │ FastAPI:         │
+│   Sheets    │                    │ - /process       │
+│ - Отправляет│                    │ - /status        │
+│   данные    │                    │                  │
+│ - Получает  │<──── JSON ─────────│ Celery Worker:   │
+│   результат │                    │ - Pipeline (10   │
+│ - Обновляет │                    │   шагов)         │
+│   Sheets    │                    │ - Async задачи   │
+└─────────────┘                    │                  │
+                                   │ Redis:           │
+                                   │ - Очередь задач  │
+                                   │ - Кеш статусов   │
+                                   └──────────────────┘
+```
+
+## ⚙️ Возможности
+
 - 📈 Частотность запросов через XMLRiver Wordstat API
 - 🔍 Поиск конкурентов через XMLRiver Yandex Search API
-- 🌐 Парсинг HTML через httpx + браузерный парсинг (Selenium) для JavaScript-сайтов
-- 🏷️ Извлечение метатегов из HTML страниц
-- 🔖 Классификация типов страниц через LLM
-- 🧠 Лемматизация текстов (извлечение ключевых слов)
+- 🌐 Парсинг HTML (httpx + Selenium для JavaScript-сайтов)
+- 🏷️ Извлечение существующих метатегов
+- 🔖 Классификация типов страниц через LLM (опционально)
+- 🧠 Лемматизация текстов и извлечение ключевых слов
 - 🤖 Генерация метатегов через LLM (Claude/GPT/Grok/DeepSeek)
-- ✏️ Редактор метатегов (дополнительная проверка LLM)
-- 💰 Автоматический подсчет стоимости API запросов
+- ✏️ Проверка и корректировка метатегов (опционально)
+- 💰 Автоматический подсчет стоимости обработки
 - 💱 Конвертация USD → RUB по курсу ЦБ РФ
-- ✅ Автоматическая загрузка результатов в Google Sheets
 - 📝 Подробное логирование всех операций
-- ♻️ Бесконечный цикл работы с настраиваемым интервалом
+- 🚀 Асинхронная обработка через Celery + Redis
 
-## Быстрый старт
+## 🚀 Быстрый старт API
+
+**Подробная документация:** см. [`api/README.md`](api/README.md)
 
 ### 1. Клонирование репозитория
 ```bash
-git clone https://github.com/masta-danila/seotools.git
-cd seotools
+git clone https://github.com/masta-danila/metagenerator-api.git
+cd metagenerator-api
 ```
 
-### 2. Создание виртуального окружения
+### 2. Установка Redis
+```bash
+# macOS
+brew install redis
+brew services start redis
+
+# Ubuntu/Debian
+sudo apt install redis-server
+sudo systemctl start redis
+```
+
+### 3. Создание виртуального окружения
 ```bash
 python3 -m venv venv
 source venv/bin/activate  # Для Linux/Mac
-# или
-venv\Scripts\activate  # Для Windows
 ```
 
-### 3. Установка зависимостей
+### 4. Установка зависимостей
 ```bash
 pip install -r requirements.txt
 ```
 
-### 4. Настройка окружения
+### 5. Настройка окружения
 
 Создайте файл `.env` в корне проекта:
 ```bash
-# API ключи
+# API ключи для внешних сервисов
 ANTHROPIC_API_KEY=your_anthropic_key
 OPENAI_API_KEY=your_openai_key
 GOOGLE_API_KEY=your_google_key
 ARSENKIN_API_KEY=your_arsenkin_key
 DEEPSEEK_API_KEY=your_deepseek_key
 GROK_API_KEY=your_grok_key
+
+# API ключи для доступа к вашему API (через запятую)
+API_KEYS=key1,key2,key3
+
+# Redis настройки (опционально, есть defaults)
+REDIS_HOST=localhost
+REDIS_PORT=6379
+REDIS_DB=0
+
+# Celery настройки (опционально)
+CELERY_BROKER_URL=redis://localhost:6379/0
+CELERY_RESULT_BACKEND=redis://localhost:6379/0
 ```
 
-### 5. Настройка Google Sheets
+### 6. Запуск API-сервера
 
-#### 5.1. Получите credentials.json:
-1. Перейдите в [Google Cloud Console](https://console.cloud.google.com/)
-2. Создайте новый проект или выберите существующий
-3. Включите Google Sheets API и Google Drive API
-4. Создайте Service Account
-5. Скачайте JSON ключ
-6. Сохраните как `gsheets/credentials.json`
-
-#### 5.2. Создайте spreadsheets.json:
-```json
-[
-  "YOUR_SPREADSHEET_ID_1",
-  "YOUR_SPREADSHEET_ID_2"
-]
-```
-
-### 6. Запуск
-
+**Вариант 1: Все сервисы одной командой (фоновый режим)**
 ```bash
-python main.py
+./start_all.sh
+# Остановка: ./stop_all.sh
 ```
+
+**Вариант 2: Раздельный запуск (для разработки)**
+
+Терминал 1 - Celery Worker:
+```bash
+./start_celery.sh
+```
+
+Терминал 2 - FastAPI:
+```bash
+./start_api.sh
+# Или вручную:
+uvicorn api.app:app --reload --host 0.0.0.0 --port 8000
+```
+
+API будет доступен на `http://localhost:8000`
+
+### 7. Документация API
+
+После запуска откройте в браузере:
+- **Swagger UI:** http://localhost:8000/docs
+- **ReDoc:** http://localhost:8000/redoc
+- **Файл документации:** `api/README.md`
 
 ## Структура проекта
 
@@ -136,166 +197,200 @@ seotools/
 └── README.md                   # Этот файл
 ```
 
-## Использование
+## 📖 Использование API
 
-### Основной пайплайн
-```bash
-python main.py
-```
+### Основной процесс обработки (через API)
 
-Выполняет полный цикл из 14 шагов:
-1. Чтение данных из Google Sheets
-2. Обновление Data листов (сохранение стоимости)
-3. Получение частотности через XMLRiver Wordstat
-4. Поиск конкурентов через XMLRiver Yandex Search
-5. Первичный парсинг HTML (httpx)
-6. Повторный парсинг через браузер (опционально)
-7. Извлечение метатегов из HTML
-8. Валидация качества парсинга
-9. Классификация типов страниц (опционально)
-10. Лемматизация текстов
-11. Подготовка данных для генерации
-12. Генерация метатегов через LLM
-13. Редактор метатегов (опционально)
-14. Загрузка результатов в Google Sheets
+API принимает данные о URL и выполняет pipeline из 10 шагов:
 
-### Отдельные модули
+1. Получение частотности запросов (Wordstat)
+2. Поиск конкурентов (Yandex Search)
+3. Первичный парсинг HTML (httpx)
+4. Повторный парсинг через браузер (для сложных сайтов)
+5. Извлечение метатегов из HTML
+6. Валидация качества парсинга
+7. **Классификация страниц** (опционально, LLM)
+8. Лемматизация текстов
+9. **Генерация метатегов** (через LLM)
+10. **Проверка метатегов** (опционально, LLM)
 
-#### Чтение Google Sheets
-```bash
-python gsheets/sheets_reader.py
-```
-
-#### Частотность запросов
-```bash
-python xmlriver/wordstat_batch.py
-```
-
-#### Поиск конкурентов
-```bash
-python xmlriver/yandex_parser.py
-```
-
-#### Парсинг HTML
-```bash
-python site_parser/batch_html_processor.py
-```
-
-#### Браузерный парсинг
-```bash
-python site_parser/batch_browser_processor.py
-```
-
-#### Классификация страниц
-```bash
-python site_parser/batch_page_classifier.py
-```
-
-#### Лемматизация
-```bash
-python lemmatizers/lemmatizer_processor.py
-```
-
-#### Генерация метатегов
-```bash
-python metagenerators/metagenerator_batch.py
-```
-
-#### Редактор метатегов
-```bash
-python metagenerators/metatag_editor_batch.py
-```
-
-## Настройка параметров
-
-Параметры в `main.py`:
+### Пример использования API
 
 ```python
-# Интервал между циклами
-SLEEP_MINUTES = 10  # минут
+import requests
 
-# Флаги модулей
-ENABLE_BROWSER_REPARSING = True   # Браузерный парсинг для неудачных URL
-ENABLE_PAGE_CLASSIFIER = True     # Классификация типов страниц
-ENABLE_METATAG_EDITOR = False     # Редактор метатегов (дополнительная проверка)
+# Подготовка данных
+data = {
+    "https://example.com/": {
+        "queries": [{"query": "купить товар"}],
+        "company_name": "Моя Компания",
+        "region": 213
+    }
+}
 
-# Шаг 4: Поиск конкурентов
-max_concurrent=5           # Одновременных запросов к XMLRiver
-max_urls_per_query=10      # Максимум URL на запрос
-region=213                 # ID региона (213 = Москва)
+# Создание задачи
+response = requests.post(
+    "http://localhost:8000/process",
+    headers={"X-API-Key": "your-key"},
+    json={
+        "data": data,
+        "enable_classification": True,
+        "enable_metatag_editor": True
+    }
+)
 
-# Шаг 8: Валидация
-min_success_rate=0.5       # Минимальный процент успешных парсингов
+task_id = response.json()["task_id"]
 
-# Шаг 9: Классификация (опционально)
-model="claude-haiku-4-5-20251001"  # Быстрая модель
-max_concurrent=3
-
-# Шаг 10: Лемматизация
-title_min_words=4
-title_max_words=6
-description_min_words=6
-description_max_words=10
-
-# Шаг 12: Генерация метатегов
-model="claude-sonnet-4-5-20250929"  # Основная модель
-max_concurrent=3
-max_retries=3
-max_title_length=90
-max_description_length=170
-
-# Шаг 13: Редактор (опционально)
-model="claude-haiku-4-5-20251001"
-max_concurrent=3
+# Ожидание результата
+import time
+while True:
+    status = requests.get(
+        f"http://localhost:8000/status/{task_id}",
+        headers={"X-API-Key": "your-key"}
+    ).json()
+    
+    if status["status"] == "completed":
+        result = status["result"]["data"]
+        print(result["https://example.com/"]["generated_metatags"])
+        break
+    
+    time.sleep(3)
 ```
 
-## Логирование
+### Тестирование API
 
-Логи сохраняются в папке `logs/`:
-- `pipeline.log` - главный оркестратор (все 14 шагов)
-- `search.log` - XMLRiver API запросы (Wordstat + Yandex Search)
-- `html_parser.log` - парсинг HTML через httpx
-- `browser_fetcher.log` - браузерный парсинг (Selenium)
-- `page_classifier.log` - классификация типов страниц
-- `lemmatizer.log` - лемматизация текстов
-- `metagenerator.log` - генерация метатегов
-- `sheets_reader.log` - чтение Google Sheets
-- `sheets_updater.log` - обновление Google Sheets
-
-### Просмотр логов в реальном времени
 ```bash
-# Главный лог
-tail -f logs/pipeline.log
+# Быстрый smoke test
+python api/test_simple.py
 
-# Конкретный модуль
-tail -f logs/search.log
-tail -f logs/browser_fetcher.log
+# Полный тест с реальными данными
+python api/test_api.py
+
+# Пример полного клиента (с Google Sheets)
+python api/example_client.py
+```
+
+## ⚙️ Конфигурация
+
+### Настройки API (`.env`)
+
+```bash
+# API сервер
+API_TITLE="Metagenerator API"
+API_VERSION="1.0.0"
+API_KEYS=key1,key2,key3  # Через запятую
+
+# Redis
+REDIS_HOST=localhost
+REDIS_PORT=6379
+REDIS_DB=0
+
+# Celery
+CELERY_BROKER_URL=redis://localhost:6379/0
+CELERY_RESULT_BACKEND=redis://localhost:6379/0
+CELERY_TASK_TIME_LIMIT=3600  # 1 час на задачу
+```
+
+### Параметры pipeline
+
+Параметры обработки задаются внутри модулей pipeline:
+
+- **Классификация** (`enable_classification` в запросе): `claude-haiku-4-5-20251001`
+- **Генерация метатегов**: `claude-sonnet-4-5-20250929`
+- **Редактор метатегов** (`enable_metatag_editor` в запросе): `claude-haiku-4-5-20251001`
+- **Валидация парсинга**: минимум 50% успешных
+- **XMLRiver**: до 5 одновременных запросов, до 10 URL на запрос
+- **Лемматизация**: 4-6 слов для Title, 6-10 для Description
+
+## 📝 Логирование
+
+### Логи Celery worker
+
+Celery выводит логи в консоль (или перенаправляются в файл):
+```bash
+# Логи в реальном времени
+tail -f celery.log  # если запущено через systemd
+
+# Или смотреть в терминале где запущен Celery
+```
+
+### Логи модулей pipeline
+
+Логи модулей сохраняются в папке `logs/`:
+- `metagenerator_pipeline.log` - основной pipeline
+- `search.log` - XMLRiver API (Wordstat + Yandex Search)
+- `html_parser.log` - парсинг HTML
+- `browser_fetcher.log` - браузерный парсинг
+- `page_classifier.log` - классификация страниц
+- `lemmatizer.log` - лемматизация
+- `metagenerator.log` - генерация метатегов
+
+```bash
+# Просмотр логов
+tail -f logs/metagenerator_pipeline.log
 tail -f logs/metagenerator.log
 ```
 
-## Развертывание на сервере
+### Логи FastAPI
 
-Подробная инструкция в [DEPLOY.md](DEPLOY.md)
-
-Быстрый деплой:
+FastAPI выводит логи в консоль:
 ```bash
-./deploy_server.sh
-./setup_systemd_service.sh
+# Если запущено через systemd
+journalctl -u metagenerator-api -f
+```
+
+## 🚀 Развертывание на сервере
+
+### Подготовка
+
+1. **Установить зависимости:**
+   ```bash
+   sudo apt update
+   sudo apt install python3-pip python3-venv redis-server
+   ```
+
+2. **Клонировать репозиторий:**
+   ```bash
+   cd /home/user
+   git clone https://github.com/masta-danila/metagenerator-api.git
+   cd metagenerator-api
+   ```
+
+3. **Настроить окружение:**
+   ```bash
+   python3 -m venv venv
+   source venv/bin/activate
+   pip install -r requirements.txt
+   cp .env.example .env
+   # Отредактировать .env
+   ```
+
+### Запуск через systemd
+
+См. подробную инструкцию в `api/README.md` раздел "Deployment"
+
+Или используйте скрипты:
+```bash
+./deploy_server.sh         # Автоматическая настройка
+./setup_systemd_service.sh # Установка systemd service
 ```
 
 ## Требования
 
 - Python 3.11+
-- Google Chrome (для браузерного парсинга)
-- API ключи:
-  - **Обязательные:**
-    - XMLRiver API (ARSENKIN_API_KEY) - для Wordstat и Yandex Search
-    - Google Service Account - для Google Sheets
-  - **Один LLM на выбор:**
-    - Anthropic Claude (ANTHROPIC_API_KEY)
-    - OpenAI GPT (OPENAI_API_KEY)
-    - xAI Grok (GROK_API_KEY)
-    - DeepSeek (DEEPSEEK_API_KEY)
+- Redis 5.0+
+- Google Chrome (для браузерного парсинга JavaScript сайтов)
+
+### API ключи
+
+**Обязательные:**
+- **XMLRiver API** (`ARSENKIN_API_KEY`) - для Wordstat и Yandex Search
+- **Минимум один LLM провайдер:**
+  - Anthropic Claude (`ANTHROPIC_API_KEY`) - рекомендуется
+  - OpenAI GPT (`OPENAI_API_KEY`)
+  - xAI Grok (`GROK_API_KEY`)
+  - DeepSeek (`DEEPSEEK_API_KEY`)
+  - Google Gemini (`GOOGLE_API_KEY`)
 
 ## Стоимость API
 
@@ -329,10 +424,24 @@ tail -f logs/metagenerator.log
 - **DeepSeek**: см. документацию DeepSeek
 - Используйте `max_concurrent` для контроля нагрузки
 
-## Лицензия
+## 🔌 Интеграция с Google Sheets
+
+Этот репозиторий содержит **только API-сервер**.
+
+Для работы с Google Sheets (чтение/запись) используйте отдельный **клиент**:
+- Клиент читает данные из Google Sheets
+- Отправляет POST-запрос к этому API
+- Получает обработанные метатеги
+- Записывает результаты обратно в Google Sheets
+
+**Пример клиента:** см. `api/example_client.py`
+
+Отдельный репозиторий клиента будет создан позже.
+
+## 📄 Лицензия
 
 MIT
 
-## Автор
+## 👤 Автор
 
 Danila Dzhaev

@@ -12,7 +12,7 @@ env/
 .env
 gsheets/credentials.json
 gsheets/spreadsheets.json
-utils/usd_rate.json
+config/usd_rate.json
 
 # IDE
 .vscode/
@@ -32,6 +32,8 @@ logs/
 
 # Test results
 jsontests/
+test_sheets_reader.py
+api/quick_test.sh
 
 # Proxy configs (sensitive data)
 **/proxy.txt

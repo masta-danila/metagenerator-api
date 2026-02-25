@@ -330,9 +330,10 @@ async def process_sheets_data(
             queries = url_data.get('queries', [])
             
             # Сортируем запросы по частотности (от большего к меньшему)
+            # Обрабатываем случай когда frequency=None (ошибка Wordstat)
             queries_sorted = sorted(
                 queries,
-                key=lambda q: q.get('frequency', 0) if isinstance(q, dict) else 0,
+                key=lambda q: (q.get('frequency') or 0) if isinstance(q, dict) else 0,
                 reverse=True
             )
             

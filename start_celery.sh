@@ -26,5 +26,5 @@ if [ -d "venv" ]; then
     echo "✓ Виртуальное окружение активировано"
 fi
 
-# Запускаем Celery worker
-celery -A api.celery_worker worker --loglevel=info --concurrency=2
+# Запускаем Celery worker (без heartbeat для macOS совместимости)
+celery -A api.celery_worker worker --loglevel=info --concurrency=2 --without-heartbeat

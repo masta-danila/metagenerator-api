@@ -7,23 +7,21 @@ from datetime import datetime
 
 
 class TaskRequest(BaseModel):
-    """Запрос на создание задачи генерации метатегов"""
+    """Запрос на создание задачи обработки данных через metagenerator_pipeline"""
     
-    spreadsheet_ids: list[str] = Field(
+    data: Dict[str, Any] = Field(
         ...,
-        description="Список ID Google таблиц для обработки",
-        min_length=1,
-        example=["1Vshm7t0QemnBYtD67i9nZLb_B1l47C6v7fAxGYMZ9mQ"]
+        description="Словарь с URL и их данными (структура: {url: {queries, company_name, region, ...}})"
     )
     
     enable_classification: bool = Field(
         default=False,
-        description="Включить классификацию страниц через LLM (шаг 7)"
+        description="Включить классификацию страниц через LLM (pipeline шаг 7)"
     )
     
     enable_metatag_editor: bool = Field(
         default=False,
-        description="Включить проверку и исправление метатегов через LLM (шаг 10)"
+        description="Включить проверку и исправление метатегов через LLM (pipeline шаг 10)"
     )
 
 
@@ -51,6 +49,11 @@ class TaskResponse(BaseModel):
     message: str = Field(
         default="Задача создана и добавлена в очередь",
         description="Информационное сообщение"
+    )
+    
+    urls_count: int = Field(
+        ...,
+        description="Количество URL для обработки"
     )
 
 
@@ -98,6 +101,10 @@ class TaskStatus(BaseModel):
         default=None,
         description="Сообщение об ошибке (только для failed)"
     )
+    
+    class Config:
+        # Не включать в ответ поля со значением None
+        exclude_none = True
 
 
 class HealthResponse(BaseModel):

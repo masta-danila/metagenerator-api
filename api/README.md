@@ -1,13 +1,29 @@
 # Metagenerator API
 
-REST API для автоматической генерации SEO метатегов с использованием LLM.
+REST API для обработки данных через metagenerator_pipeline.
+
+## Что делает API
+
+API выполняет **только обработку данных** (10 шагов pipeline):
+- Получение частотности запросов (Wordstat)
+- Получение конкурентов (Yandex Search)
+- Парсинг HTML (httpx + browser)
+- Извлечение метатегов
+- Классификация страниц (опционально)
+- Лемматизация текстов
+- Генерация метатегов (LLM)
+- Редактирование метатегов (опционально)
+
+**Что НЕ делает API:**
+- ❌ Не читает Google Sheets (данные передаются в запросе)
+- ❌ Не обновляет Google Sheets (клиент делает это с результатом)
 
 ## Архитектура
 
 - **FastAPI** - веб-фреймворк для API
-- **Celery** - фоновая обработка задач
+- **Celery** - фоновая обработка задач (асинхронно)
 - **Redis** - брокер сообщений и хранилище результатов
-- **metagenerator_pipeline** - ядро обработки данных
+- **metagenerator_pipeline** - ядро обработки данных (10 шагов)
 
 ## Установка
 
@@ -64,14 +80,59 @@ uvicorn api.app:app --reload --host 0.0.0.0 --port 8000
 curl http://localhost:8000/health
 ```
 
-### Создание задачи
+### 1. Подготовка данных (на клиенте)
+
+Клиент подготавливает данные (может прочитать из Google Sheets и преобразовать):
+
+```python
+# Пример подготовки данных (структура упрощена - только URL и их данные)
+data = {
+  "https://example.com/": {
+    "queries": [{"query": "купить товар"}],
+    "company_name": "Моя Компания",
+    "region": 213,  # ID региона Яндекса
+    "variables_h1": ["вариант 1"],
+    "variables_title": [],
+    "variables_description": []
+  },
+  "https://example.com/products/": {
+    "queries": [{"query": "каталог товаров"}],
+    "company_name": "Моя Компания",
+    "region": 213,
+    "variables_h1": [],
+    "variables_title": [],
+    "variables_description": []
+  }
+}
+```
+
+### 2. Создание задачи через API
+
+**Важно:** API принимает на вход готовый словарь с данными
 
 ```bash
-curl -X POST http://localhost:8000/generate \
+curl -X POST http://localhost:8000/process \
   -H "Content-Type: application/json" \
-  -H "X-API-Key: test-api-key-123" \
+  -H "X-API-Key: your-api-key" \
   -d '{
-    "spreadsheet_ids": ["1Vshm7t0QemnBYtD67i9nZLb_B1l47C6v7fAxGYMZ9mQ"],
+    "data": {
+      "https://example.com/page/": {
+        "queries": [{"query": "текст запроса"}],
+        "company_name": "Компания",
+        "region": 213,
+        "variables_h1": [],
+        "variables_title": [],
+        "variables_description": []
+      },
+      "https://example.com/about/": {
+        "queries": [{"query": "о компании"}],
+        "company_name": "Компания",
+        "region": 213,
+        "variables_h1": [],
+        "variables_title": [],
+        "variables_description": []
+      }
+    },
     "enable_classification": false,
     "enable_metatag_editor": false
   }'
@@ -83,11 +144,44 @@ curl -X POST http://localhost:8000/generate \
   "task_id": "550e8400-e29b-41d4-a716-446655440000",
   "status": "queued",
   "created_at": "2026-02-23T15:30:00",
-  "message": "Задача создана для обработки 1 таблиц"
+  "message": "Задача создана для обработки 2 URL",
+  "urls_count": 2
 }
 ```
 
-### Проверка статуса задачи
+Через Python (полный пример):
+```python
+import requests
+
+# 1. Подготовить данные
+data = {
+    "https://example.com/page1/": {
+        "queries": [{"query": "ключевой запрос"}],
+        "company_name": "Моя Компания",
+        "region": 213,
+        "variables_h1": [],
+        "variables_title": [],
+        "variables_description": []
+    }
+}
+
+# 2. Отправить в API
+response = requests.post(
+    "http://localhost:8000/process",
+    headers={"X-API-Key": "your-api-key"},
+    json={
+        "data": data,
+        "enable_classification": False,
+        "enable_metatag_editor": False
+    }
+)
+
+task_info = response.json()
+task_id = task_info["task_id"]
+print(f"Задача создана: {task_id}")
+```
+
+### 3. Проверка статуса задачи
 
 ```bash
 curl http://localhost:8000/status/550e8400-e29b-41d4-a716-446655440000 \
@@ -111,13 +205,80 @@ curl http://localhost:8000/status/550e8400-e29b-41d4-a716-446655440000 \
   "status": "completed",
   "result": {
     "status": "completed",
-    "spreadsheet_ids": ["1Vshm7t0Q..."],
-    "data_update": {...},
-    "meta_update": {...},
-    "completed_at": "2026-02-23T15:45:00"
+    "data": {
+      "https://example.com/": {
+        "generated_metatags": {
+          "h1": "Заголовок H1",
+          "title": "Title страницы",
+          "description": "Описание страницы"
+        },
+        "classification": {
+          "page_type": "commercial",
+          "confidence": 0.95
+        },
+        "wordstat_cost": {
+          "total_rub": 0.05,
+          "api_requests": 2
+        },
+        "yandex_search_cost": {
+          "total_rub": 0.10,
+          "queries": 2
+        },
+        "metageneration_cost": {
+          "total_rub": 0.30,
+          "tokens": 1500
+        }
+      }
+    },
+    "completed_at": "2026-02-23T15:45:00",
+    "urls_processed": 1
   },
   "completed_at": "2026-02-23T15:45:00"
 }
+```
+
+### 4. Обновление Google Sheets с результатом
+
+После получения результата клиент обновляет Google Sheets:
+
+```python
+import requests
+import time
+from gsheets.data_updater import update_all_data_sheets
+from gsheets.sheets_updater import update_all_spreadsheets
+
+# Ждем завершения задачи
+while True:
+    status_response = requests.get(
+        f"http://localhost:8000/status/{task_id}",
+        headers={"X-API-Key": "your-api-key"}
+    )
+    status_data = status_response.json()
+    
+    if status_data["status"] == "completed":
+        result_data = status_data["result"]["data"]
+        break
+    elif status_data["status"] == "failed":
+        raise Exception(status_data.get("error", "Task failed"))
+    
+    print(f"Статус: {status_data.get('progress', 'processing')}")
+    time.sleep(5)
+
+# Обновляем Google Sheets с результатами
+print("Обновляю Data лист...")
+update_all_data_sheets(frequency_data=result_data)
+
+print("Обновляю Meta лист...")
+update_all_spreadsheets(data=result_data, sheet_name="Meta")
+
+print("✅ Данные успешно обновлены в Google Sheets!")
+```
+
+**Полный пример:** см. `api/example_client.py`
+
+```bash
+# Запустить пример клиента
+python api/example_client.py
 ```
 
 ### Отмена задачи
@@ -140,7 +301,7 @@ curl -X DELETE http://localhost:8000/cancel/550e8400-e29b-41d4-a716-446655440000
 |-------|-----|----------|
 | GET | `/` | Информация о сервисе |
 | GET | `/health` | Health check |
-| POST | `/generate` | Создать задачу |
+| POST | `/process` | Обработать данные через pipeline |
 | GET | `/status/{task_id}` | Статус задачи |
 | DELETE | `/cancel/{task_id}` | Отменить задачу |
 

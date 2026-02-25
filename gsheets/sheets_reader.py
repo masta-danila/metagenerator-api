@@ -357,9 +357,9 @@ def process_specific_spreadsheets(spreadsheet_ids: List[str]) -> Dict:
             # Получаем данные для всех URL из Data, фильтруя по статусу Meta
             input_data = get_all_data_urls(input_sheet, meta_status)
             
-            if input_data['urls']:
-                all_data[spreadsheet_id] = input_data
-                logger.info(f"  ✓ Загружено {len(input_data['urls'])} URL")
+            if input_data:
+                all_data[spreadsheet_id] = {'urls': input_data}
+                logger.info(f"  ✓ Загружено {len(input_data)} URL")
             else:
                 logger.warning(f"  ⚠ Нет URL для обработки")
                 

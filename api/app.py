@@ -9,7 +9,7 @@ import redis
 from api.config import settings
 from api.models import TaskRequest, TaskResponse, TaskStatus, HealthResponse
 from api.auth import verify_api_key
-from api.celery_worker import process_spreadsheets_task
+from api.celery_worker import process_pipeline_task
 from api.celery_config import celery_app
 
 # Создаем FastAPI приложение
@@ -81,26 +81,43 @@ async def health_check():
     )
 
 
-@app.post("/generate", response_model=TaskResponse, tags=["Tasks"])
-async def generate_metatags(
+@app.post("/process", response_model=TaskResponse, tags=["Tasks"])
+async def process_data(
     request: TaskRequest,
     api_key: str = Depends(verify_api_key)
 ):
     """
-    Создает задачу на генерацию метатегов
+    Создает задачу на обработку данных через metagenerator_pipeline
     
     Процесс:
-    1. Задача добавляется в очередь Celery
-    2. Возвращается task_id для отслеживания статуса
-    3. Используйте GET /status/{task_id} для проверки прогресса
+    1. Принимает словарь с данными (структура из process_all_spreadsheets)
+    2. Выполняет metagenerator_pipeline (10 шагов обработки)
+    3. Возвращает обработанные данные с метатегами (очищенные)
+    
+    Что выполняется:
+    - Получение частотности (Wordstat)
+    - Получение конкурентов (Yandex Search)
+    - Парсинг HTML (httpx + browser)
+    - Извлечение метатегов
+    - Классификация (опционально)
+    - Лемматизация
+    - Генерация метатегов
+    - Редактирование метатегов (опционально)
+    
+    Что НЕ выполняется:
+    - Чтение Google Sheets (данные передаются в запросе)
+    - Обновление Google Sheets (клиент делает это сам с результатом)
     
     Требуется API ключ в заголовке X-API-Key
     """
     try:
+        # Подсчитываем количество URL (data = {url: {...}})
+        urls_count = len(request.data)
+        
         # Отправляем задачу в Celery
-        task = process_spreadsheets_task.apply_async(
+        task = process_pipeline_task.apply_async(
             kwargs={
-                "spreadsheet_ids": request.spreadsheet_ids,
+                "data": request.data,
                 "enable_classification": request.enable_classification,
                 "enable_metatag_editor": request.enable_metatag_editor
             }
@@ -110,7 +127,8 @@ async def generate_metatags(
             task_id=task.id,
             status="queued",
             created_at=datetime.now().isoformat(),
-            message=f"Задача создана для обработки {len(request.spreadsheet_ids)} таблиц"
+            message=f"Задача создана для обработки {urls_count} URL",
+            urls_count=urls_count
         )
         
     except Exception as e:
@@ -120,7 +138,7 @@ async def generate_metatags(
         )
 
 
-@app.get("/status/{task_id}", response_model=TaskStatus, tags=["Tasks"])
+@app.get("/status/{task_id}", response_model=TaskStatus, response_model_exclude_none=True, tags=["Tasks"])
 async def check_status(
     task_id: str,
     api_key: str = Depends(verify_api_key)

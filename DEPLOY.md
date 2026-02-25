@@ -30,6 +30,41 @@ curl http://localhost:8000/health
 
 ---
 
+## Nginx (reverse proxy + защита по IP)
+
+Рекомендуется в production: Nginx принимает входящие запросы, фильтрует по IP и проксирует на FastAPI (порт 8000).
+
+### Установка
+
+```bash
+sudo apt install nginx
+```
+
+### Конфигурация
+
+Используй шаблон из репозитория:
+
+```bash
+sudo cp nginx.conf.example /etc/nginx/sites-available/metagenerator-api
+# Отредактировать: заменить YOUR_DOMAIN и ALLOWED_IP
+sudo nano /etc/nginx/sites-available/metagenerator-api
+sudo ln -s /etc/nginx/sites-available/metagenerator-api /etc/nginx/sites-enabled/
+sudo nginx -t
+sudo systemctl reload nginx
+```
+
+### Что настроить в конфиге
+
+| Параметр | Описание |
+|----------|---------|
+| `server_name` | Домен или IP сервера |
+| `allow IP;` | IP клиента которому разрешён доступ (можно несколько строк) |
+| SSL | Настроить через `certbot` при наличии домена |
+
+После настройки Nginx API будет доступен снаружи только с разрешённых IP, а изнутри — по `http://localhost:8000`.
+
+---
+
 ## Парсер (SEO Tools Parser, Xvfb + Chrome)
 
 ## Системные требования

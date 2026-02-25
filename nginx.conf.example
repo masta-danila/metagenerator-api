@@ -6,11 +6,12 @@
 
 server {
     listen 80;
-    server_name YOUR_DOMAIN_OR_IP;  # заменить на домен или IP сервера
+    server_name 135.181.242.20;
 
-    # Разрешённые IP (добавить нужные строки, остальные будут отклонены с 403)
-    allow ALLOWED_IP_1;
-    # allow ALLOWED_IP_2;
+    # Разрешённые IP
+    allow 147.45.255.191;
+    allow 31.130.152.33;
+    allow 176.213.59.235;
     deny all;
 
     location / {
@@ -30,12 +31,14 @@ server {
 # HTTPS (раскомментировать после certbot: certbot --nginx -d YOUR_DOMAIN)
 # server {
 #     listen 443 ssl;
-#     server_name YOUR_DOMAIN;
+#     server_name 135.181.242.20;
 #
 #     ssl_certificate /etc/letsencrypt/live/YOUR_DOMAIN/fullchain.pem;
 #     ssl_certificate_key /etc/letsencrypt/live/YOUR_DOMAIN/privkey.pem;
 #
-#     allow ALLOWED_IP_1;
+#     allow 147.45.255.191;
+#     allow 31.130.152.33;
+#     allow 176.213.59.235;
 #     deny all;
 #
 #     location / {

@@ -3,9 +3,12 @@
 """
 import os
 import requests
+from dotenv import load_dotenv
+
+load_dotenv()
 
 API_URL = "http://localhost:8000"
-API_KEY = os.getenv("TEST_API_KEY", "test-api-key-123")  # задать через TEST_API_KEY или .env
+API_KEY = os.getenv("TEST_API_KEY", "test-api-key-123")
 
 print("SMOKE TEST API")
 print("=" * 60)

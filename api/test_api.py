@@ -1,14 +1,16 @@
 """
 Быстрый тест API с минимальными данными
 """
+import os
 import requests
 import time
 import json
+from dotenv import load_dotenv
 
-import os
+load_dotenv()
 
 API_URL = "http://localhost:8000"
-API_KEY = os.getenv("TEST_API_KEY", "test-api-key-123")  # задать через TEST_API_KEY или .env
+API_KEY = os.getenv("TEST_API_KEY", "test-api-key-123")
 
 # Тестовые данные (2 URL)
 # Новая структура: {url: {данные}} без уровня таблиц

@@ -24,6 +24,33 @@ echo "✅ Redis работает"
 mkdir -p /tmp/metagenerator-api
 mkdir -p logs
 
+# Запустить Xvfb на Linux (для браузерного парсинга)
+if [[ "$(uname)" == "Linux" ]]; then
+    if ! command -v Xvfb &> /dev/null; then
+        echo "❌ Xvfb не установлен! Установите: sudo apt-get install xvfb"
+        exit 1
+    fi
+
+    DISPLAY_NUM=99
+    while [ -e "/tmp/.X${DISPLAY_NUM}-lock" ]; do
+        DISPLAY_NUM=$((DISPLAY_NUM + 1))
+    done
+
+    echo "🖥️  Запуск Xvfb (дисплей :${DISPLAY_NUM})..."
+    Xvfb :${DISPLAY_NUM} -screen 0 1920x1080x24 -ac +extension GLX +render -noreset > logs/xvfb.log 2>&1 &
+    XVFB_PID=$!
+
+    sleep 1
+    if ! ps -p $XVFB_PID > /dev/null 2>&1; then
+        echo "❌ Не удалось запустить Xvfb"
+        exit 1
+    fi
+
+    export DISPLAY=:${DISPLAY_NUM}
+    echo $XVFB_PID > /tmp/metagenerator-api/xvfb.pid
+    echo "✅ Xvfb запущен (PID: $XVFB_PID, DISPLAY=:${DISPLAY_NUM})"
+fi
+
 # Запустить Celery worker в фоне
 echo "🔄 Запуск Celery worker..."
 nohup celery -A api.celery_worker worker \
@@ -80,5 +107,8 @@ echo "📝 Логи:"
 echo "   Celery: tail -f logs/celery.log"
 echo "   FastAPI: tail -f logs/fastapi.log"
 echo "   Flower: tail -f logs/flower.log"
+if [[ "$(uname)" == "Linux" ]]; then
+echo "   Xvfb:   tail -f logs/xvfb.log"
+fi
 echo ""
 echo "⏹️  Остановка: ./stop_all.sh"

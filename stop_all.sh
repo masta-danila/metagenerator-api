@@ -33,9 +33,19 @@ if [ -f /tmp/metagenerator-api/flower.pid ]; then
     rm /tmp/metagenerator-api/flower.pid
 fi
 
+if [ -f /tmp/metagenerator-api/xvfb.pid ]; then
+    XVFB_PID=$(cat /tmp/metagenerator-api/xvfb.pid)
+    if kill -0 $XVFB_PID 2>/dev/null; then
+        kill $XVFB_PID
+        echo "✅ Xvfb остановлен (PID: $XVFB_PID)"
+    fi
+    rm /tmp/metagenerator-api/xvfb.pid
+fi
+
 # Дополнительно убить по имени процесса (на всякий случай)
 pkill -f "celery.*worker" 2>/dev/null || true
 pkill -f "uvicorn.*api.app" 2>/dev/null || true
 pkill -f "celery.*flower" 2>/dev/null || true
+pkill -f "Xvfb" 2>/dev/null || true
 
 echo "✅ Все сервисы остановлены"

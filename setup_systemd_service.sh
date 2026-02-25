@@ -1,36 +1,35 @@
 #!/bin/bash
 
-# Скрипт для установки systemd сервиса SEO Tools
+# Скрипт для установки systemd сервиса Metagenerator API
+# Перед запуском: отредактируйте metagenerator-api.service (User, WorkingDirectory, PATH)
 set -e
 
-echo "🔧 Устанавливаю systemd сервис SEO Tools..."
+echo "Устанавливаю systemd сервис Metagenerator API..."
 
-# Копируем service файл в systemd директорию
-echo "📁 Копирую service файл..."
-sudo cp seotools.service /etc/systemd/system/
+if [ ! -f "metagenerator-api.service" ]; then
+    echo "Ошибка: metagenerator-api.service не найден. Запустите скрипт из корня проекта."
+    exit 1
+fi
 
-# Перезагружаем systemd
-echo "🔄 Перезагружаю systemd daemon..."
+echo "Копирую service файл..."
+sudo cp metagenerator-api.service /etc/systemd/system/
+
+echo "Перезагружаю systemd daemon..."
 sudo systemctl daemon-reload
 
-# Включаем автозапуск сервиса
-echo "⚡ Включаю автозапуск сервиса..."
-sudo systemctl enable seotools.service
+echo "Включаю автозапуск сервиса..."
+sudo systemctl enable metagenerator-api.service
 
-# Запускаем сервис
-echo "🚀 Запускаю сервис..."
-sudo systemctl start seotools.service
+echo "Запускаю сервис..."
+sudo systemctl start metagenerator-api.service
 
-# Проверяем статус
-echo "📊 Статус сервиса:"
-sudo systemctl status seotools.service --no-pager -l
+echo "Статус сервиса:"
+sudo systemctl status metagenerator-api.service --no-pager -l
 
-echo "✅ Сервис установлен и запущен!"
 echo ""
-echo "📝 Полезные команды:"
-echo "   sudo systemctl status seotools           # Статус сервиса"
-echo "   sudo systemctl restart seotools          # Перезапуск сервиса"
-echo "   sudo systemctl stop seotools             # Остановка сервиса"
-echo "   sudo journalctl -u seotools -f           # Логи в реальном времени"
-echo "   sudo journalctl -u seotools --since today  # Логи за сегодня"
+echo "Полезные команды:"
+echo "   sudo systemctl status metagenerator-api   # Статус"
+echo "   sudo systemctl restart metagenerator-api  # Перезапуск"
+echo "   sudo systemctl stop metagenerator-api     # Остановка"
+echo "   sudo journalctl -u metagenerator-api -f   # Логи"
 echo ""

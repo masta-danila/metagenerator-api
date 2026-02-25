@@ -42,17 +42,13 @@ good_key = requests.post(
     headers={"X-API-Key": API_KEY},
     json={
         "data": {
-            "TEST": {
-                "urls": {
-                    "https://example.com/": {
-                        "queries": [{"query": "test"}],
-                        "company_name": "Test",
-                        "region": 213,
-                        "variables_h1": [],
-                        "variables_title": [],
-                        "variables_description": []
-                    }
-                }
+            "https://example.com/": {
+                "queries": [{"query": "test"}],
+                "company_name": "Test",
+                "region": 213,
+                "variables_h1": [],
+                "variables_title": [],
+                "variables_description": []
             }
         }
     }

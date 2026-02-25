@@ -563,8 +563,8 @@ if __name__ == "__main__":
             device_type="desktop",     # Тип устройства для эмуляции
             visible=True,              # Видимый режим (headless детектируется)
             skip_problematic=False,    # НЕ пропускаем
-            reparse_main_urls=False,   # Парсить main_urls (для теста)
-            reparse_filtered_urls=True  # Парсить filtered_urls (для теста)
+            reparse_main_urls=True,   # Парсить main_urls (для теста)
+            reparse_filtered_urls=False  # Парсить filtered_urls (для теста)
         )
         
         # Сохраняем результаты

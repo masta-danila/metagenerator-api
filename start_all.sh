@@ -20,8 +20,9 @@ if ! redis-cli ping > /dev/null 2>&1; then
 fi
 echo "✅ Redis работает"
 
-# Создать директорию для PID файлов
+# Создать директории для PID и логов
 mkdir -p /tmp/metagenerator-api
+mkdir -p logs
 
 # Запустить Celery worker в фоне
 echo "🔄 Запуск Celery worker..."

@@ -3,22 +3,17 @@ Description=Metagenerator API (FastAPI + Celery)
 After=network.target redis.service
 
 [Service]
-Type=forking
+# oneshot: start_all.sh запускает процессы в фоне и выходит
+Type=oneshot
+RemainAfterExit=yes
 User=callchecker
 Group=callchecker
 WorkingDirectory=/home/callchecker/metagenerator-api
 Environment="PATH=/home/callchecker/metagenerator-api/venv/bin:/usr/local/bin:/usr/bin:/bin"
 Environment="PYTHONUNBUFFERED=1"
 
-# Запуск API и Celery через supervisor или tmux
 ExecStart=/bin/bash /home/callchecker/metagenerator-api/start_all.sh
-
-# Остановка
 ExecStop=/bin/bash /home/callchecker/metagenerator-api/stop_all.sh
-
-# Автоматический перезапуск при падении
-Restart=on-failure
-RestartSec=10
 
 # Логирование
 StandardOutput=journal

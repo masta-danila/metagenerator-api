@@ -29,49 +29,20 @@ pip install -r requirements.txt
 # 3. Проверяем наличие .env файла
 if [ ! -f ".env" ]; then
     echo "ОШИБКА: Файл .env не найден!"
-    echo "Создайте файл .env с API ключами (ANTHROPIC_API_KEY, OPENAI_API_KEY, ARSENKIN_API_KEY и др.)"
+    echo "Создайте файл .env (см. .env.example). Нужны: API_KEYS, Redis; для pipeline: XMLRIVER_USER_ID, XMLRIVER_API_KEY, минимум один LLM ключ (ANTHROPIC_API_KEY, OPENAI_API_KEY и др.)"
     exit 1
 else
     echo "Файл .env найден"
 fi
 
-# 4. Проверяем Google Sheets credentials
-if [ ! -f "gsheets/credentials.json" ]; then
-    echo "ОШИБКА: Файл gsheets/credentials.json не найден!"
-    echo "Скопируйте credentials.json из Google Cloud Console"
-    exit 1
+# 4. Google Sheets (опционально, нужны только для клиента; API не использует)
+if [ -f "gsheets/credentials.json" ]; then
+    echo "Google Sheets credentials найдены (опционально)"
 else
-    echo "Google Sheets credentials найдены"
+    echo "Google Sheets credentials не найдены (нужны только для клиента, не для API)"
 fi
 
-# 5. Проверяем spreadsheets.json
-if [ ! -f "gsheets/spreadsheets.json" ]; then
-    echo "ОШИБКА: Файл gsheets/spreadsheets.json не найден!"
-    echo "Создайте файл с ID Google таблиц"
-    exit 1
-else
-    echo "Конфигурация Google Sheets найдена"
-fi
-
-# 6. Проверяем Google Sheets подключение
-echo "Проверяю Google Sheets подключение..."
-python -c "
-import gspread
-from google.oauth2.service_account import Credentials
-try:
-    scopes = [
-        'https://www.googleapis.com/auth/spreadsheets',
-        'https://www.googleapis.com/auth/drive'
-    ]
-    credentials = Credentials.from_service_account_file('gsheets/credentials.json', scopes=scopes)
-    client = gspread.authorize(credentials)
-    print('Google Sheets подключение успешно!')
-except Exception as e:
-    print(f'Ошибка Google Sheets: {e}')
-    exit(1)
-"
-
-# 7. Проверяем конфигурационные файлы
+# 5. Проверяем конфигурационные файлы
 if [ ! -f "xmlriver/blacklist_domains.json" ]; then
     echo "Создаю blacklist_domains.json..."
     echo "[]" > xmlriver/blacklist_domains.json
@@ -95,18 +66,18 @@ if [ ! -f "llm/llm_pricing.json" ]; then
     exit 1
 fi
 
-if [ ! -f "utils/usd_rate.json" ]; then
-    echo "Создаю utils/usd_rate.json с начальными данными..."
-    mkdir -p utils
+if [ ! -f "config/usd_rate.json" ]; then
+    echo "Создаю config/usd_rate.json с начальными данными..."
+    mkdir -p config
     echo '{
-  "last_update": "2026-01-01T00:00:00",
-  "markup_percent": 20,
-  "cache_hours": 24,
-  "usd_rate": 91.5
-}' > utils/usd_rate.json
+  "usd_rate": 91.5,
+  "last_updated": "",
+  "markup_percentage": 7.5,
+  "update_interval_hours": 24
+}' > config/usd_rate.json
 fi
 
-# 8. Создаем необходимые директории
+# 6. Создаем необходимые директории
 echo "Создаю директории для логов и тестовых данных..."
 mkdir -p logs
 mkdir -p jsontests
@@ -114,22 +85,18 @@ mkdir -p jsontests
 echo ""
 echo "Развертывание завершено успешно!"
 echo ""
-echo "Доступные команды для запуска:"
-echo "   python main.py                             # Основной пайплайн (14 шагов)"
-echo "   python gsheets/sheets_reader.py            # Чтение данных из Google Sheets"
-echo "   python xmlriver/yandex_parser.py           # Поиск конкурентов через XMLRiver"
-echo "   python site_parser/batch_page_classifier.py # Классификация страниц"
-echo "   python metagenerators/metagenerator_batch.py # Генерация метатегов"
+echo "Запуск API:"
+echo "   ./start_all.sh                             # FastAPI + Celery (нужен Redis)"
+echo "   ./stop_all.sh                              # Остановка"
 echo ""
-echo "Управление systemd сервисом:"
-echo "   sudo systemctl status seotools             # Статус сервиса"
-echo "   sudo systemctl restart seotools            # Перезапуск сервиса"
-echo "   sudo systemctl stop seotools               # Остановка сервиса"
-echo "   sudo journalctl -u seotools -f             # Логи сервиса"
+echo "Управление systemd (если настроен):"
+echo "   sudo systemctl status metagenerator-api    # Статус"
+echo "   sudo systemctl restart metagenerator-api   # Перезапуск"
+echo "   sudo journalctl -u metagenerator-api -f    # Логи"
 echo ""
 echo "Мониторинг:"
-echo "   tail -f logs/*.log                         # Просмотр логов"
-echo "   ps aux | grep main.py                      # Запущенный процесс"
+echo "   tail -f logs/celery.log logs/fastapi.log   # Логи API"
+echo "   curl http://localhost:8000/health         # Health check"
 echo ""
-echo "🎯 Развертывание завершено!"
+echo "Развертывание завершено!"
 echo ""

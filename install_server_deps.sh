@@ -1,7 +1,8 @@
 #!/bin/bash
 
-# Скрипт установки зависимостей на сервере для SEO Tools Parser
+# Скрипт установки зависимостей на сервере (Metagenerator API + парсер)
 # Поддерживает Ubuntu/Debian и CentOS/RHEL
+# Для API обязательны: Python, Redis, Chrome (для браузерного парсинга)
 
 set -e
 
@@ -10,7 +11,7 @@ GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 NC='\033[0m'
 
-echo -e "${GREEN}=== Установка зависимостей для SEO Tools Parser ===${NC}"
+echo -e "${GREEN}=== Установка зависимостей для Metagenerator API ===${NC}"
 
 # Определение ОС
 if [ -f /etc/os-release ]; then
@@ -32,6 +33,7 @@ if [[ "$OS" == "ubuntu" ]] || [[ "$OS" == "debian" ]]; then
         python3 \
         python3-pip \
         python3-venv \
+        redis-server \
         xvfb \
         wget \
         curl \
@@ -56,6 +58,7 @@ elif [[ "$OS" == "centos" ]] || [[ "$OS" == "rhel" ]] || [[ "$OS" == "fedora" ]]
     sudo yum install -y \
         python3 \
         python3-pip \
+        redis \
         xorg-x11-server-Xvfb \
         wget \
         curl \
@@ -101,11 +104,23 @@ elif command -v google-chrome-stable &> /dev/null; then
     echo "Версия Chrome: $CHROME_VERSION"
 fi
 
+# Redis для API (Ubuntu/Debian)
+if [[ "$OS" == "ubuntu" ]] || [[ "$OS" == "debian" ]]; then
+    if systemctl is-active --quiet redis-server 2>/dev/null; then
+        echo -e "${GREEN}Redis уже запущен${NC}"
+    else
+        echo -e "${YELLOW}Запуск Redis...${NC}"
+        sudo systemctl enable redis-server 2>/dev/null || true
+        sudo systemctl start redis-server 2>/dev/null || true
+    fi
+fi
+
 echo -e "${GREEN}Все системные зависимости установлены!${NC}"
 echo ""
 echo -e "${YELLOW}Следующие шаги:${NC}"
-echo "1. Перейдите в директорию проекта: cd /path/to/seotools"
+echo "1. Перейдите в директорию проекта: cd /path/to/metagenerator-api"
 echo "2. Создайте виртуальное окружение: python3 -m venv venv"
-echo "3. Активируйте его: source venv/bin/activate"
-echo "4. Установите Python зависимости: pip install -r requirements.txt"
-echo "5. Запустите тест: ./start_with_xvfb.sh"
+echo "3. Активируйте: source venv/bin/activate"
+echo "4. Установите зависимости: pip install -r requirements.txt"
+echo "5. Настройте .env (см. .env.example)"
+echo "6. Запуск API: ./start_all.sh (остановка: ./stop_all.sh)"

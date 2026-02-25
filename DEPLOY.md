@@ -1,4 +1,36 @@
-# Инструкция по деплою SEO Tools Parser на сервер
+# Инструкция по деплою на сервер
+
+## Выкладка Metagenerator API (FastAPI + Celery + Redis)
+
+### Чеклист перед выкладкой
+
+- [ ] **Сервер**: Ubuntu/Debian, Python 3.11+, Redis, Chrome (для браузерного парсинга)
+- [ ] **Системные зависимости**: `./install_server_deps.sh` (устанавливает Python, Redis, Xvfb, Chrome)
+- [ ] **Проект**: клонирован, `python3 -m venv venv`, `pip install -r requirements.txt`
+- [ ] **Файл .env**: скопирован из `.env.example`, заданы `API_KEYS`, при необходимости Redis (host/port). Для pipeline: `XMLRIVER_USER_ID`, `XMLRIVER_API_KEY`, минимум один LLM-ключ (ANTHROPIC_API_KEY, OPENAI_API_KEY и т.д.)
+- [ ] **config/usd_rate.json**: создаётся скриптом `deploy_server.sh` при отсутствии; иначе создать вручную (см. пример в deploy_server.sh)
+- [ ] **Redis**: запущен (`systemctl start redis-server` или `brew services start redis`)
+- [ ] **Проверка**: `./start_all.sh`, затем `curl http://localhost:8000/health` — в ответе `redis_connected: true`, `celery_workers > 0`
+- [ ] **Systemd** (опционально): отредактировать `metagenerator-api.service` (User, WorkingDirectory, PATH), затем `./setup_systemd_service.sh`
+
+### Быстрый деплой API
+
+```bash
+./install_server_deps.sh
+cd /path/to/metagenerator-api
+python3 -m venv venv && source venv/bin/activate
+pip install -r requirements.txt
+cp .env.example .env   # и отредактировать .env
+./deploy_server.sh     # проверки и создание config/usd_rate.json при необходимости
+./start_all.sh
+curl http://localhost:8000/health
+```
+
+Остановка: `./stop_all.sh`. Документация API: http://localhost:8000/docs
+
+---
+
+## Парсер (SEO Tools Parser, Xvfb + Chrome)
 
 ## Системные требования
 

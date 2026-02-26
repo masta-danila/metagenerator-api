@@ -9,7 +9,6 @@ from datetime import datetime
 # Добавляем корневую папку проекта в sys.path
 project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root))
-sys.path.insert(0, str(project_root / "gsheets"))
 
 from api.celery_config import celery_app
 from metagenerator_pipeline import run_metagenerator_pipeline
@@ -90,14 +89,11 @@ def process_pipeline_task(
             # Оставляем только поля с результатами обработки
             result_fields = [
                 'generated_metatags',
-                'classification',
                 'wordstat_cost',
                 'yandex_search_cost',
                 'metageneration_cost',
                 'classification_cost',
                 'metatag_editor_cost',
-                'parsed_html',
-                'filtered_urls'
             ]
             
             for field in result_fields:

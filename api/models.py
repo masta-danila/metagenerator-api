@@ -165,21 +165,30 @@ class TaskStatus(BaseModel):
                             "title": "Купить товар по выгодной цене | Моя Компания",
                             "description": "Купить товар от Моя Компания. Лучшие цены и качество."
                         },
-                        "classification": {
-                            "page_type": "commercial",
-                            "confidence": 0.95
-                        },
                         "wordstat_cost": {
-                            "total_rub": 0.05,
-                            "api_requests": 2
+                            "api_requests": 2,
+                            "cost": 0.05,
+                            "currency": "RUB"
                         },
                         "yandex_search_cost": {
-                            "total_rub": 0.10,
-                            "queries": 2
+                            "api_requests": 2,
+                            "cost": 0.05,
+                            "currency": "RUB"
                         },
                         "metageneration_cost": {
-                            "total_rub": 0.30,
-                            "tokens": 1500
+                            "api_requests": 1,
+                            "cost": 0.006,
+                            "currency": "USD"
+                        },
+                        "classification_cost": {
+                            "api_requests": 0,
+                            "cost": 0,
+                            "currency": ""
+                        },
+                        "metatag_editor_cost": {
+                            "api_requests": 0,
+                            "cost": 0,
+                            "currency": ""
                         }
                     }
                 },

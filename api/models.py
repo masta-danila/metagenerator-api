@@ -79,8 +79,8 @@ class TaskRequest(BaseModel):
                         "variables_description": []
                     }
                 },
-                "enable_classification": True,
-                "enable_metatag_editor": True
+                "enable_classification": False,
+                "enable_metatag_editor": False
             }
         }
 

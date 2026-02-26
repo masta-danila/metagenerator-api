@@ -124,6 +124,7 @@ class BrowserFetcher:
                     # Пауза после запуска для стабильности
                     time.sleep(2)
             
+            self.driver.set_page_load_timeout(90)  # 90 секунд на загрузку страницы
             logger.info("Браузер успешно запущен")
             return True
         except Exception as e:
@@ -242,7 +243,7 @@ if __name__ == "__main__":
     else:
         print("Работаем БЕЗ прокси (direct connection)\n")
     
-    url = "https://ekb.deltainzhiniring.ru/avtoservis/domkratyi/transmissionnyie/"
+    url = "https://www.advertpro.ru/services/"
     print(f"Загружаем: {url}\n")
     
     html = fetcher.fetch_html(url, wait_time=5, min_html_length=2000)

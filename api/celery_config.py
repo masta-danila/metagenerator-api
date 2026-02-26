@@ -20,8 +20,7 @@ celery_app.conf.update(
     result_serializer='json',
     timezone='Europe/Moscow',
     enable_utc=True,
-    # Отключаем heartbeat для совместимости с macOS
-    worker_send_task_events=False,
+    result_expires=86400,  # Результаты задач хранятся 24 часа, потом удаляются из Redis
     worker_disable_rate_limits=True,
     # Логирование
     worker_log_format='[%(asctime)s: %(levelname)s/%(processName)s] %(message)s',

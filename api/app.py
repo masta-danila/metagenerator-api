@@ -66,7 +66,7 @@ async def health_check():
     # Проверка Celery workers
     celery_workers = 0
     try:
-        inspect = celery_app.control.inspect()
+        inspect = celery_app.control.inspect(timeout=2.0)
         stats = inspect.stats()
         if stats:
             celery_workers = len(stats)

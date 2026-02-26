@@ -77,6 +77,17 @@ class TaskRequest(BaseModel):
                         "variables_h1": [],
                         "variables_title": [],
                         "variables_description": []
+                    },
+                    "https://example.com/services/": {
+                        "queries": [
+                            {"query": "услуги компании"},
+                            {"query": "заказать услугу"}
+                        ],
+                        "company_name": "Моя Компания",
+                        "region": 213,
+                        "variables_h1": [],
+                        "variables_title": [],
+                        "variables_description": []
                     }
                 },
                 "enable_classification": False,

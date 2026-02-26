@@ -109,7 +109,7 @@ def cleanup_pipeline_data(data: Dict) -> Dict:
                 'metatag_editor_cost'
             ]
             for cost_field in cost_fields:
-                cleaned_url_data[cost_field] = url_data.get(cost_field, {})
+                cleaned_url_data[cost_field] = url_data.get(cost_field, {"api_requests": 0, "cost": 0, "currency": ""})
             
             # Копируем generated_metatags (главный результат!)
             if 'generated_metatags' in url_data:
